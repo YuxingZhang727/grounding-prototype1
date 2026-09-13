@@ -1,11 +1,9 @@
 <script lang="ts">
   import { onDestroy, tick } from 'svelte';
 
-  type Step = 'welcome' | 'camera' | 'crop' | 'segment' | 'notice' | 'fragment' | 'arrange' | 'finish';
-  type Shape = 'circle' | 'rectangle' | 'organic';
-  type Noticed = 'Color' | 'Shape' | 'Texture';
+  type Step = 'welcome' | 'camera' | 'crop' | 'segment' | 'fragment' | 'arrange' | 'finish';
   type Fragment = {
-    color:string; shape:Shape; noticed:Noticed; image:string; aspectRatio:number;
+    image:string; aspectRatio:number;
     x:number; y:number; size:number; rotation:number;
   };
   type Gesture = {
@@ -26,7 +24,6 @@
   let segmentScore = 0;
   let segmentStatus = '';
   let segmentError = '';
-  let sampledColor = '#9a806c';
   let cameraMessage = '';
   let selection = { x: 20, y: 20, w: 60, h: 60 };
   let selecting = false;
@@ -34,7 +31,6 @@
   let fragments: Fragment[] = [];
   let activeFragment = -1;
   let gesture: Gesture | null = null;
-  const noticeOptions: Noticed[] = ['Color', 'Shape', 'Texture'];
 
   const placements = [
     { x: 12, y: 18, size: 31, rotation: -10 },
@@ -155,7 +151,6 @@
       segmentedOverlay = result.overlayUrl;
       segmentedAspectRatio = result.aspectRatio;
       segmentScore = result.score;
-      sampledColor = result.color;
       segmentStatus = 'Cutout ready';
     } catch (error) {
       console.error(error);
@@ -164,25 +159,19 @@
     }
   }
 
-  function keepCutout() { step = 'notice'; }
-
-  function chooseAgain() {
-    clearSegmentation();
-    step = 'crop';
-  }
-
-  function makeFragment(noticed: Noticed) {
+  function keepCutout() {
     const index = fragments.length;
-    const shape = noticed === 'Color' ? 'circle' : noticed === 'Shape' ? 'rectangle' : 'organic';
     fragments = [...fragments, {
-      color: sampledColor,
-      shape,
-      noticed,
       image: segmentedImage,
       aspectRatio: segmentedAspectRatio,
       ...placementFor(index)
     }];
     step = 'fragment';
+  }
+
+  function chooseAgain() {
+    clearSegmentation();
+    step = 'crop';
   }
 
   function continueLooking() {
@@ -359,30 +348,16 @@
       {/if}
     </section>
 
-  {:else if step === 'notice'}
-    <section class="notice-screen">
-      <span class="count-label">Thing {fragments.length + 1}</span>
-      <div class="color-orbit" style={`--sample:${sampledColor}`}><span></span></div>
-      <h2>What did you notice<br />most about it?</h2>
-      <div class="choices" style={`--sample:${sampledColor}`}>
-        {#each noticeOptions as choice}
-          <button onclick={() => makeFragment(choice)}>
-            <i class={choice.toLowerCase()}></i>{choice}<span>→</span>
-          </button>
-        {/each}
-      </div>
-    </section>
-
   {:else if step === 'fragment'}
     {@const latest = fragments[fragments.length - 1]}
     <section class="fragment-screen">
       <p class="eyebrow">A fragment from what you saw</p>
       <div class="fragment-stage">
-        <img class={`object-fragment ${latest.noticed.toLowerCase()}`} src={latest.image} alt="Your separated object" style={`--color:${latest.color}`} />
+        <img class="object-fragment" src={latest.image} alt="Your separated object" />
         <span class="orbit-line"></span>
       </div>
       <h2>{fragments.length} {fragments.length === 1 ? 'thing' : 'things'} noticed</h2>
-      <p class="fragment-note">You noticed its {latest.noticed.toLowerCase()}.</p>
+      <p class="fragment-note">A small piece of what was around you.</p>
       <div class="fragment-actions">
         <button class="secondary" onclick={continueLooking}>Notice another</button>
         <button class="primary compact" onclick={finishCollecting}>Done <span>→</span></button>
@@ -406,18 +381,18 @@
         <div class="collage" class:editing={step === 'arrange'} bind:this={collageStage}>
           {#each fragments as fragment, index}
             <div
-              class={`collage-item ${fragment.shape}`}
+              class="collage-item"
               class:active={activeFragment === index && step === 'arrange'}
-              style={`--color:${fragment.color};left:${fragment.x}%;top:${fragment.y}%;width:${fragment.size}%;aspect-ratio:${fragment.aspectRatio};transform:rotate(${fragment.rotation}deg);z-index:${activeFragment === index ? 10 : index + 1}`}
+              style={`left:${fragment.x}%;top:${fragment.y}%;width:${fragment.size}%;aspect-ratio:${fragment.aspectRatio};transform:rotate(${fragment.rotation}deg);z-index:${activeFragment === index ? 10 : index + 1}`}
               onpointerdown={(event) => step === 'arrange' && fragmentPointerDown(event, index, 'drag')}
               onpointermove={fragmentPointerMove}
               onpointerup={fragmentPointerUp}
               role="button"
               tabindex={step === 'arrange' ? 0 : -1}
-              aria-label={`Fragment ${index + 1}: ${fragment.noticed}`}
+              aria-label={`Fragment ${index + 1}`}
               onkeydown={(event) => { if (event.key === 'Enter' || event.key === ' ') activeFragment = index; }}
             >
-              <img class={fragment.noticed.toLowerCase()} src={fragment.image} alt="" draggable="false" />
+              <img src={fragment.image} alt="" draggable="false" />
               {#if step === 'arrange' && activeFragment === index}
                 <button class="rotate-handle" aria-label="Rotate fragment" onpointerdown={(event) => fragmentPointerDown(event, index, 'rotate')}>↻</button>
                 <button class="resize-handle" aria-label="Resize fragment" onpointerdown={(event) => fragmentPointerDown(event, index, 'resize')}></button>
@@ -513,24 +488,10 @@
   .segment-actions { flex:0 0 auto; display:flex; align-items:center; justify-content:center; gap:12px; position:relative; z-index:3; }
   .local-note { margin:11px 0 0; color:#81847c; font-size:10px; letter-spacing:.08em; }
 
-  .notice-screen,.fragment-screen { display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:100px 24px 50px; }
-  .notice-screen .count-label { position:absolute; top:110px; }
-  .color-orbit { width:118px; height:118px; border:1px solid #c7c4b9; border-radius:50%; margin:18px 0 28px; display:grid; place-items:center; }
-  .color-orbit span { width:82px; height:82px; border-radius:43% 57% 60% 40% / 52% 42% 58% 48%; background:var(--sample); transform:rotate(-12deg); }
-  .notice-screen h2 { font-size:clamp(38px,5vw,60px); margin:0 0 38px; }
-  .choices { width:min(520px,100%); border-top:1px solid #cbc9c1; }
-  .choices button { width:100%; border:0; border-bottom:1px solid #cbc9c1; background:none; padding:17px 4px; display:grid; grid-template-columns:38px 1fr auto; align-items:center; text-align:left; cursor:pointer; font-family:Georgia,serif; font-size:21px; }
-  .choices button:hover { color:#c54b34; }
-  .choices i { width:18px; height:18px; background:var(--sample, #657267); display:block; }
-  .choices .color { background:var(--sample); border-radius:50%; }.choices .shape { border-radius:2px; transform:rotate(12deg); background:#798378; }.choices .texture { border-radius:62% 38% 53% 47%; background:repeating-linear-gradient(45deg,#7d7768 0 2px,transparent 2px 5px); }
+  .fragment-screen { display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:100px 24px 50px; }
   .fragment-screen .eyebrow { margin-bottom:10px; }
   .fragment-stage { width:min(340px,72vw); aspect-ratio:1; position:relative; display:grid; place-items:center; margin:6px 0 16px; }
-  .abstract { background:var(--color); box-shadow:inset 0 0 45px rgba(255,255,255,.16); }
-  .abstract { width:64%; height:64%; position:relative; z-index:2; }
   .object-fragment { width:72%; height:72%; object-fit:contain; position:relative; z-index:2; filter:drop-shadow(0 18px 18px rgba(25,30,25,.18)); }
-  .object-fragment.color { filter:saturate(1.3) contrast(1.04) drop-shadow(0 18px 18px rgba(25,30,25,.18)); }
-  .object-fragment.shape { filter:grayscale(.86) contrast(1.15) drop-shadow(0 18px 18px rgba(25,30,25,.18)); }
-  .circle { border-radius:50%; }.rectangle { border-radius:3%; transform:rotate(-9deg); aspect-ratio:1.28!important; }.organic { border-radius:64% 36% 44% 56% / 38% 54% 46% 62%; transform:rotate(11deg); }
   .orbit-line { position:absolute; width:88%; height:88%; border:1px solid #c5c3ba; border-radius:50%; }
   .fragment-screen h2 { font-size:32px; margin:0; }
   .fragment-note { color:#6d736d; margin:6px 0 26px; }
@@ -543,10 +504,7 @@
   .collage { width:min(100%,680px); aspect-ratio:1; background:#faf9f5; box-shadow:0 22px 70px rgba(34,39,34,.13); position:relative; overflow:hidden; touch-action:none; }
   .collage-item { position:absolute; cursor:grab; touch-action:none; transition:filter .15s; display:grid; place-items:center; }
   .collage-item > img { width:100%; height:100%; object-fit:contain; pointer-events:none; user-select:none; filter:drop-shadow(0 8px 7px rgba(25,30,25,.14)); }
-  .collage-item > img.color { filter:saturate(1.3) contrast(1.04) drop-shadow(0 8px 7px rgba(25,30,25,.14)); }
-  .collage-item > img.shape { filter:grayscale(.86) contrast(1.15) drop-shadow(0 8px 7px rgba(25,30,25,.14)); }
   .collage-item.active { outline:1px dashed #202720; outline-offset:7px; filter:saturate(1.08); }
-  .collage-item.rectangle { border-radius:3%; }
   .rotate-handle,.resize-handle { position:absolute; z-index:20; width:24px; height:24px; background:#1b211c; color:#fff; border:2px solid #faf9f5; border-radius:50%; display:grid; place-items:center; cursor:crosshair; }
   .rotate-handle { left:50%; top:-22px; transform:translateX(-50%) rotate(calc(var(--rotation, 0deg) * -1)); font-size:12px; }
   .resize-handle { right:-14px; bottom:-14px; cursor:nwse-resize; }
@@ -567,7 +525,6 @@
     .collage-shell { width:100%; }
     .arrange-screen > .primary,.arrange-screen > .secondary { align-self:center; }
     .collage { width:min(100%,540px); }
-    .notice-screen .count-label { top:90px; }
     .segment-screen { min-height:540px; padding:76px 14px 16px; }
     .segment-screen .section-heading { margin-bottom:12px; }
     .segment-screen .section-heading h2 { font-size:32px; }
