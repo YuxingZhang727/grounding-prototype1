@@ -409,7 +409,14 @@
         <h2>Find something that<br />catches your attention.</h2>
       </div>
       <div class="viewfinder">
-        <video bind:this={video} playsinline muted></video>
+        <video
+          bind:this={video}
+          playsinline
+          muted
+          oncanplay={() => {
+            if (video?.videoWidth && video.videoHeight) cameraReady = true;
+          }}
+        ></video>
         {#if cameraMessage}
           <div class="camera-fallback"><p>{cameraMessage}</p></div>
         {/if}
