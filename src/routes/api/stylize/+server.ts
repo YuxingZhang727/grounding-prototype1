@@ -1,10 +1,10 @@
 import { json } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
 
-type Payload = { image?: string };
+type Payload = { image?: string; detectObject?: boolean };
 
 const COLLAGE_PROMPT = `
-Transform the uploaded isolated object into one standalone rubber-stamp collage sticker.
+Transform the primary object in the uploaded image into one standalone rubber-stamp collage sticker.
 
 Preserve the exact identity, silhouette, proportions, orientation, recognizable features, spatial relationships, and essential original colors of the object. Do not replace, stretch, distort, move, or invent the subject. Simplify it to the minimum visual information needed for immediate recognition; remove tiny clutter, repetitive detail, visual noise, and irrelevant remnants from the source background.
 
@@ -17,13 +17,19 @@ Add a continuous, clean, warm-white die-cut border around the entire outer silho
 Output only this single sticker, centered and fully visible on a transparent background with generous empty padding. No scene, no poster, no split layout, no frame, no typography, no logo, no extra objects, and no multi-image collage. Do not crop any part of the sticker.
 `.trim();
 
+const DETECT_OBJECT_PROMPT = `
+The uploaded image is a user-selected crop from a larger photograph, not a pre-segmented cutout. First identify the single main object intentionally enclosed by the crop. Separate that object completely from the room, landscape, furniture, people, shadows, and all other background content. If the crop contains connected parts that clearly belong to the same object, retain them together. Do not preserve the crop's rectangular boundary. Then follow the sticker instructions below.
+
+${COLLAGE_PROMPT}
+`.trim();
+
 function parseBase64DataUrl(input: string) {
   const match = input.match(/^data:(image\/(?:png|jpeg|jpg|webp));base64,(.+)$/);
   if (!match) return null;
   return { mimeType: match[1], data: match[2] };
 }
 
-async function generateByAiPro(imageData: string) {
+async function generateByAiPro(imageData: string, detectObject: boolean) {
   const parsed = parseBase64DataUrl(imageData);
   if (!parsed) return { ok: false, status: 400, message: 'Invalid image format' };
 
@@ -32,7 +38,7 @@ async function generateByAiPro(imageData: string) {
 
   const body = new FormData();
   body.append('model', env.AIPRO_IMAGE_MODEL || 'gpt-image-2');
-  body.append('prompt', COLLAGE_PROMPT);
+  body.append('prompt', detectObject ? DETECT_OBJECT_PROMPT : COLLAGE_PROMPT);
   body.append('size', '1024x1024');
   body.append('quality', 'high');
   body.append('background', 'transparent');
@@ -77,7 +83,7 @@ export async function POST({ request }: { request: Request }) {
     return json({ success: false, error: 'Missing image data.' }, { status: 400 });
   }
 
-  const result = await generateByAiPro(payload.image);
+  const result = await generateByAiPro(payload.image, Boolean(payload.detectObject));
   if (!result.ok || !result.image) {
     return json({ success: false, error: result.message || 'Transformation failed.' }, { status: result.status || 500 });
   }

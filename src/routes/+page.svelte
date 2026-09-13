@@ -40,6 +40,7 @@
   let isSegmenting = false;
   let segmentationRequest = 0;
   let segmentationQueued = false;
+  let directAiMode = false;
 
   const placements = [
     { x: 12, y: 18, size: 31, rotation: -10 },
@@ -123,6 +124,7 @@
     transformStatus = '';
     segmentError = '';
     isTransforming = false;
+    directAiMode = false;
   }
 
   function resetSelection() {
@@ -168,13 +170,42 @@
     if (distance < 1.5) {
       selectionBox = null;
       selectionPoints = [...selectionPoints, current];
+      directAiMode = false;
+      runSegmentation();
     } else if (draftBox && draftBox.w > 1 && draftBox.h > 1) {
       selectionPoints = [];
       selectionBox = draftBox;
+      prepareDirectAiCrop(draftBox);
     }
     selectionStart = null;
     draftBox = null;
-    runSegmentation();
+  }
+
+  async function prepareDirectAiCrop(box: SelectionBox) {
+    segmentationRequest += 1;
+    segmentationQueued = false;
+    const image = new Image();
+    image.src = capturedImage;
+    await image.decode();
+    const x = Math.max(0, Math.round((box.x / 100) * image.naturalWidth));
+    const y = Math.max(0, Math.round((box.y / 100) * image.naturalHeight));
+    const width = Math.max(1, Math.min(image.naturalWidth - x, Math.round((box.w / 100) * image.naturalWidth)));
+    const height = Math.max(1, Math.min(image.naturalHeight - y, Math.round((box.h / 100) * image.naturalHeight)));
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext('2d');
+    if (!context) return;
+    context.drawImage(image, x, y, width, height, 0, 0, width, height);
+    segmentedImage = canvas.toDataURL('image/png');
+    segmentedOverlay = capturedImage;
+    segmentedAspectRatio = width / height;
+    segmentScore = 0;
+    segmentError = '';
+    segmentStatus = 'Frame ready for direct AI detection.';
+    transformedImage = '';
+    transformStatus = '';
+    directAiMode = true;
   }
 
   async function runSegmentation() {
@@ -189,6 +220,7 @@
     }
     const request = ++segmentationRequest;
     isSegmenting = true;
+    directAiMode = false;
     segmentError = '';
     segmentedImage = '';
     segmentedOverlay = '';
@@ -279,11 +311,11 @@
     return canvas.toDataURL('image/png');
   }
 
-  async function stylizeWithAI(sourceUrl: string) {
+  async function stylizeWithAI(sourceUrl: string, detectObject = false) {
     const response = await fetch('/api/stylize', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ image: sourceUrl })
+      body: JSON.stringify({ image: sourceUrl, detectObject })
     });
 
     if (!response.ok) {
@@ -305,13 +337,19 @@
     isTransforming = true;
     transformStatus = 'Running artistic transform…';
     try {
-      transformedImage = await stylizeWithAI(segmentedImage);
+      transformedImage = await stylizeWithAI(segmentedImage, directAiMode);
+      segmentedAspectRatio = 1;
       transformStatus = 'Rubber-stamp collage piece ready.';
     } catch (error) {
       console.error(error);
-      transformedImage = await stylizeLocally(segmentedImage);
       const fallbackMessage = error instanceof Error ? error.message : 'Could not use AI conversion.';
-      transformStatus = `${fallbackMessage} Using local style rendering.`;
+      if (directAiMode) {
+        transformedImage = '';
+        transformStatus = fallbackMessage;
+      } else {
+        transformedImage = await stylizeLocally(segmentedImage);
+        transformStatus = `${fallbackMessage} Using local style rendering.`;
+      }
     } finally {
       isTransforming = false;
     }
@@ -509,7 +547,7 @@
           </div>
         </div>
         <div class="selection-card preview-card">
-          <span class="selection-card-label">Cutout preview</span>
+          <span class="selection-card-label">{directAiMode ? 'AI input crop' : 'Cutout preview'}</span>
           <div class="selection-preview checkerboard" class:loading={isSegmenting}>
             {#if segmentedImage}
               <img src={segmentedImage} alt="Preview of the currently selected object" />
@@ -524,7 +562,7 @@
       </div>
       <div class="selection-actions">
         <button class="secondary" onclick={clearSelectionPrompts} disabled={!selectionPoints.length && !selectionBox}>Reset selection</button>
-        <button class="primary compact" onclick={() => step = 'segment'} disabled={!segmentedImage || isSegmenting}>Use this cutout <span>→</span></button>
+        <button class="primary compact" onclick={() => step = 'segment'} disabled={!segmentedImage || isSegmenting}>{directAiMode ? 'Use this frame' : 'Use this cutout'} <span>→</span></button>
       </div>
       <p class="selection-help">{selectionPoints.length} {selectionPoints.length === 1 ? 'point' : 'points'} added{selectionBox ? ' · frame added' : ''}</p>
     </section>
@@ -540,11 +578,11 @@
       <div class="segment-preview" class:loading={!segmentedImage && !segmentError}>
         {#if segmentedImage}
           <div class="comparison-card original">
-            <span>In the scene</span>
+            <span>{directAiMode ? 'Selected frame' : 'In the scene'}</span>
             <img src={segmentedOverlay} alt="The selected object highlighted in the original scene" />
           </div>
           <div class="comparison-card stylized">
-            <span>{transformedImage ? 'Collage piece' : 'Cutout'}</span>
+            <span>{transformedImage ? 'Collage piece' : (directAiMode ? 'AI input' : 'Cutout')}</span>
             {#if isTransforming}
               <div class="segment-loading" aria-live="polite">
                 <div class="scan-object"></div>
@@ -579,7 +617,7 @@
       <div class="segment-actions">
         <button class="secondary" onclick={chooseAgain}>Choose again</button>
         {#if !transformedImage && segmentedImage}
-          <button class="primary compact" onclick={transformCutout} disabled={isTransforming}>Make collage piece <span>→</span></button>
+          <button class="primary compact" onclick={transformCutout} disabled={isTransforming}>{directAiMode ? 'Detect & make sticker' : 'Make collage piece'} <span>→</span></button>
         {:else if transformedImage}
           <button class="secondary compact" onclick={keepCutout}>Use transformed piece <span>→</span></button>
           <button class="primary compact" onclick={transformCutout} disabled={isTransforming}>Try again <span>↻</span></button>

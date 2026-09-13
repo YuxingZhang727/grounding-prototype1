@@ -5,8 +5,8 @@ A mobile-first visual grounding exercise that helps people notice things around 
 ## Current flow
 
 1. Take a photo or choose one from the device.
-2. Tap one or more parts of an object, or drag a frame around it.
-3. Refine the prompts while viewing the cutout beside the original photo.
+2. Tap one or more parts of an object to test local SAM segmentation, or drag a frame to test direct AI detection.
+3. Review either the SAM cutout or the high-resolution AI input crop beside the original photo.
 4. Transform the cutout into a rubber-stamp collage piece with an AI image-editing model.
 5. Keep collecting or tap **Done** whenever the collage feels ready.
 6. Arrange the collected cutouts into a collage.
