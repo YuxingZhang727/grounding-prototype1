@@ -10,6 +10,8 @@
     mode:'drag'|'resize'|'rotate'; index:number; startX:number; startY:number;
     original:Fragment; stage:DOMRect; centerX:number; centerY:number;
   };
+  type SelectionPoint = { x:number; y:number };
+  type SelectionBox = { x:number; y:number; w:number; h:number };
 
   let step: Step = 'welcome';
   let video: HTMLVideoElement;
@@ -31,6 +33,13 @@
   let gesture: Gesture | null = null;
   let isTransforming = false;
   let cameraReady = false;
+  let selectionPoints: SelectionPoint[] = [];
+  let selectionBox: SelectionBox | null = null;
+  let draftBox: SelectionBox | null = null;
+  let selectionStart: SelectionPoint | null = null;
+  let isSegmenting = false;
+  let segmentationRequest = 0;
+  let segmentationQueued = false;
 
   const placements = [
     { x: 12, y: 18, size: 31, rotation: -10 },
@@ -85,6 +94,7 @@
     context.drawImage(video, 0, 0);
     capturedImage = canvas.toDataURL('image/jpeg', 0.9);
     clearSegmentation();
+    resetSelection();
     stopCamera();
     step = 'crop';
   }
@@ -96,6 +106,7 @@
     reader.onload = () => {
       capturedImage = String(reader.result);
       clearSegmentation();
+      resetSelection();
       stopCamera();
       step = 'crop';
     };
@@ -114,26 +125,95 @@
     isTransforming = false;
   }
 
-  async function chooseObject(event: PointerEvent) {
+  function resetSelection() {
+    selectionPoints = [];
+    selectionBox = null;
+    draftBox = null;
+    selectionStart = null;
+    isSegmenting = false;
+    segmentationQueued = false;
+    segmentationRequest += 1;
+  }
+
+  function selectionPosition(event: PointerEvent): SelectionPoint {
     const box = cropStage.getBoundingClientRect();
-    const x = Math.max(0, Math.min(100, ((event.clientX - box.left) / box.width) * 100));
-    const y = Math.max(0, Math.min(100, ((event.clientY - box.top) / box.height) * 100));
-    clearSegmentation();
+    return {
+      x: Math.max(0, Math.min(100, ((event.clientX - box.left) / box.width) * 100)),
+      y: Math.max(0, Math.min(100, ((event.clientY - box.top) / box.height) * 100))
+    };
+  }
+
+  function selectionPointerDown(event: PointerEvent) {
+    selectionStart = selectionPosition(event);
+    draftBox = null;
+    cropStage.setPointerCapture(event.pointerId);
+  }
+
+  function selectionPointerMove(event: PointerEvent) {
+    if (!selectionStart) return;
+    const current = selectionPosition(event);
+    if (Math.hypot(current.x - selectionStart.x, current.y - selectionStart.y) < 1.5) return;
+    draftBox = {
+      x: Math.min(selectionStart.x, current.x),
+      y: Math.min(selectionStart.y, current.y),
+      w: Math.abs(current.x - selectionStart.x),
+      h: Math.abs(current.y - selectionStart.y)
+    };
+  }
+
+  function selectionPointerUp(event: PointerEvent) {
+    if (!selectionStart) return;
+    const current = selectionPosition(event);
+    const distance = Math.hypot(current.x - selectionStart.x, current.y - selectionStart.y);
+    if (distance < 1.5) {
+      selectionPoints = [...selectionPoints, current];
+    } else if (draftBox && draftBox.w > 1 && draftBox.h > 1) {
+      selectionBox = draftBox;
+    }
+    selectionStart = null;
+    draftBox = null;
+    runSegmentation();
+  }
+
+  async function runSegmentation() {
+    if (!selectionPoints.length && !selectionBox) return;
+    if (isSegmenting) {
+      segmentationQueued = true;
+      segmentationRequest += 1;
+      return;
+    }
+    const request = ++segmentationRequest;
+    isSegmenting = true;
+    segmentError = '';
+    transformedImage = '';
+    transformStatus = '';
     segmentStatus = 'Preparing the photo…';
-    step = 'segment';
     try {
-      const { segmentAtPoint } = await import('$lib/segmenter');
-      const result = await segmentAtPoint(capturedImage, { x, y }, (message) => segmentStatus = message);
+      const { segmentWithPrompts } = await import('$lib/segmenter');
+      const result = await segmentWithPrompts(capturedImage, selectionPoints, selectionBox, (message) => segmentStatus = message);
+      if (request !== segmentationRequest) return;
       segmentedImage = result.cutoutUrl;
       segmentedOverlay = result.overlayUrl;
       segmentedAspectRatio = result.aspectRatio;
       segmentScore = result.score;
       segmentStatus = 'Cutout ready';
     } catch (error) {
+      if (request !== segmentationRequest) return;
       console.error(error);
       segmentError = error instanceof Error ? error.message : 'The object could not be separated.';
       segmentStatus = '';
+    } finally {
+      isSegmenting = false;
+      if (segmentationQueued && step === 'crop') {
+        segmentationQueued = false;
+        runSegmentation();
+      }
     }
+  }
+
+  function clearSelectionPrompts() {
+    clearSegmentation();
+    resetSelection();
   }
 
   function keepCutout() {
@@ -150,12 +230,14 @@
 
   function chooseAgain() {
     clearSegmentation();
+    resetSelection();
     step = 'crop';
   }
 
   function continueLooking() {
     capturedImage = '';
     clearSegmentation();
+    resetSelection();
     begin();
   }
 
@@ -337,13 +419,49 @@
       <div class="section-heading">
         <span class="count-label">Thing {fragments.length + 1}</span>
         <h2>What caught your attention?</h2>
-        <p>Tap the object you noticed.</p>
+        <p>Tap to add details. Drag a frame for a larger object.</p>
       </div>
       <div class="crop-wrap">
-        <div class="crop-stage" bind:this={cropStage} onpointerdown={chooseObject} role="button" tabindex="0" aria-label="Tap an object in your photo to separate it">
-          <img src={capturedImage} alt="Your captured view" draggable="false" />
+        <div class="selection-card">
+          <span class="selection-card-label">Your photo</span>
+          <div
+            class="crop-stage"
+            bind:this={cropStage}
+            onpointerdown={selectionPointerDown}
+            onpointermove={selectionPointerMove}
+            onpointerup={selectionPointerUp}
+            role="application"
+            aria-label="Tap one or more parts of an object, or drag a frame around it"
+          >
+            <img src={capturedImage} alt="Your captured view" draggable="false" />
+            {#each selectionPoints as point}
+              <span class="selection-point" style={`left:${point.x}%;top:${point.y}%`}></span>
+            {/each}
+            {#if draftBox || selectionBox}
+              {@const box = draftBox || selectionBox}
+              <span class="selection-frame" style={`left:${box?.x}%;top:${box?.y}%;width:${box?.w}%;height:${box?.h}%`}></span>
+            {/if}
+          </div>
+        </div>
+        <div class="selection-card preview-card">
+          <span class="selection-card-label">Cutout preview</span>
+          <div class="selection-preview checkerboard" class:loading={isSegmenting}>
+            {#if segmentedImage}
+              <img src={segmentedImage} alt="Preview of the currently selected object" />
+            {:else}
+              <p>{segmentError || (isSegmenting ? segmentStatus : 'Your selected object will appear here.')}</p>
+            {/if}
+            {#if isSegmenting && segmentedImage}
+              <span class="preview-updating">Updating…</span>
+            {/if}
+          </div>
         </div>
       </div>
+      <div class="selection-actions">
+        <button class="secondary" onclick={clearSelectionPrompts} disabled={!selectionPoints.length && !selectionBox}>Reset selection</button>
+        <button class="primary compact" onclick={() => step = 'segment'} disabled={!segmentedImage || isSegmenting}>Use this cutout <span>→</span></button>
+      </div>
+      <p class="selection-help">{selectionPoints.length} {selectionPoints.length === 1 ? 'point' : 'points'} added{selectionBox ? ' · frame added' : ''}</p>
     </section>
 
   {:else if step === 'segment'}
@@ -523,9 +641,20 @@
   .section-heading { text-align:center; margin-bottom:26px; }
   .section-heading h2 { font-size:clamp(32px,4vw,48px); margin:11px 0 6px; }
   .section-heading p,.arrange-heading p { color:#6d736d; margin:0; }
-  .crop-wrap { width:min(820px,100%); flex:1; min-height:300px; display:grid; place-items:center; margin-bottom:28px; }
+  .crop-wrap { width:min(1000px,100%); flex:1; min-height:300px; display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:14px; align-items:stretch; margin-bottom:18px; overflow:hidden; }
+  .selection-card { min-width:0; min-height:280px; position:relative; display:grid; place-items:center; background:#e8e5dc; overflow:hidden; }
+  .selection-card-label { position:absolute; z-index:5; left:14px; top:13px; padding:7px 10px; background:rgba(20,25,21,.72); color:#fff; border-radius:100px; font-size:10px; letter-spacing:.12em; text-transform:uppercase; backdrop-filter:blur(8px); }
   .crop-stage { position:relative; display:inline-block; max-width:100%; max-height:56svh; cursor:crosshair; touch-action:none; user-select:none; overflow:hidden; box-shadow:0 18px 55px rgba(36,40,34,.12); }
   .crop-stage img { display:block; max-width:100%; max-height:56svh; pointer-events:none; }
+  .selection-point { position:absolute; width:18px; height:18px; border:3px solid #fff; border-radius:50%; background:#c54b34; box-shadow:0 2px 10px rgba(20,25,21,.35); transform:translate(-50%,-50%); pointer-events:none; }
+  .selection-frame { position:absolute; border:2px solid #fff; background:rgba(197,75,52,.14); box-shadow:0 0 0 1px rgba(197,75,52,.8); pointer-events:none; }
+  .selection-preview { position:relative; width:100%; height:100%; min-height:280px; }
+  .selection-preview > img { width:100%; height:100%; object-fit:contain; }
+  .selection-preview > p { margin:0; max-width:240px; padding:24px; text-align:center; color:#777a72; line-height:1.45; }
+  .selection-preview.loading > img { opacity:.55; }
+  .preview-updating { position:absolute; left:50%; bottom:18px; transform:translateX(-50%); padding:7px 11px; border-radius:100px; background:rgba(20,25,21,.76); color:#fff; font-size:10px; letter-spacing:.1em; text-transform:uppercase; }
+  .selection-actions { display:flex; align-items:center; justify-content:center; gap:12px; }
+  .selection-help { min-height:1.3em; margin:10px 0 0; color:#81847c; font-size:10px; letter-spacing:.08em; }
 
   .segment-screen { height:100svh; min-height:620px; padding:92px 24px 24px; display:flex; flex-direction:column; align-items:center; overflow-y:auto; }
   .segment-screen .section-heading { margin-bottom:22px; }
@@ -585,6 +714,13 @@
     .collage-shell { width:100%; }
     .arrange-screen > .primary,.arrange-screen > .secondary { align-self:center; }
     .collage { width:min(100%,540px); }
+    .focus-screen { padding:78px 14px 18px; }
+    .focus-screen .section-heading { margin-bottom:14px; }
+    .focus-screen .section-heading h2 { font-size:31px; }
+    .crop-wrap { gap:7px; min-height:240px; }
+    .selection-card,.selection-preview { min-height:240px; }
+    .selection-card-label { left:8px; top:8px; font-size:8px; }
+    .selection-actions .secondary,.selection-actions .primary { min-width:0; padding-left:16px; padding-right:16px; }
     .segment-screen { min-height:540px; padding:76px 14px 16px; }
     .segment-screen .section-heading { margin-bottom:12px; }
     .segment-screen .section-heading h2 { font-size:32px; }

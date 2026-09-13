@@ -1,6 +1,7 @@
 import { AutoProcessor, RawImage, SamModel } from '@huggingface/transformers';
 
 export type SelectionPoint = { x: number; y: number };
+export type SelectionBox = { x: number; y: number; w: number; h: number };
 
 export type SegmentResult = {
   cutoutUrl: string;
@@ -65,9 +66,10 @@ function canvasToUrl(canvas: HTMLCanvasElement): string {
   return canvas.toDataURL('image/png');
 }
 
-export async function segmentAtPoint(
+export async function segmentWithPrompts(
   imageUrl: string,
-  point: SelectionPoint,
+  points: SelectionPoint[],
+  selectionBox: SelectionBox | null,
   onProgress: (message: string) => void
 ): Promise<SegmentResult> {
   const [{ model, processor }, rawImage, sourceImage] = await Promise.all([
@@ -78,22 +80,35 @@ export async function segmentAtPoint(
 
   const width = rawImage.width;
   const height = rawImage.height;
-  const pointX = Math.max(0, Math.min(width - 1, Math.round((point.x / 100) * width)));
-  const pointY = Math.max(0, Math.min(height - 1, Math.round((point.y / 100) * height)));
+  if (!points.length && !selectionBox) throw new Error('Tap an object or draw a frame first.');
+
+  const inputPoints = points.map((point) => [
+    Math.max(0, Math.min(width - 1, Math.round((point.x / 100) * width))),
+    Math.max(0, Math.min(height - 1, Math.round((point.y / 100) * height)))
+  ]);
+  const processorOptions: Record<string, unknown> = {};
+  if (inputPoints.length) {
+    processorOptions.input_points = [inputPoints];
+    processorOptions.input_labels = [inputPoints.map(() => 1)];
+  }
+  if (selectionBox) {
+    const x1 = Math.max(0, Math.round((selectionBox.x / 100) * width));
+    const y1 = Math.max(0, Math.round((selectionBox.y / 100) * height));
+    const x2 = Math.min(width, Math.round(((selectionBox.x + selectionBox.w) / 100) * width));
+    const y2 = Math.min(height, Math.round(((selectionBox.y + selectionBox.h) / 100) * height));
+    processorOptions.input_boxes = [[[x1, y1, x2, y2]]];
+  }
 
   onProgress('Looking closely at the object…');
-  const processed = await processor(rawImage, {
-    input_points: [[[pointX, pointY]]],
-    input_labels: [[1]]
-  });
+  const processed = await processor(rawImage, processorOptions);
   const embeddings = await model.get_image_embeddings(processed);
 
   onProgress('Tracing its outline…');
-  const output = await model({
-    ...embeddings,
-    input_points: processed.input_points,
-    input_labels: processed.input_labels
-  });
+  const modelInputs: Record<string, unknown> = { ...embeddings };
+  if (processed.input_points) modelInputs.input_points = processed.input_points;
+  if (processed.input_labels) modelInputs.input_labels = processed.input_labels;
+  if (processed.input_boxes) modelInputs.input_boxes = processed.input_boxes;
+  const output = await model(modelInputs);
   const masks = await processor.post_process_masks(
     output.pred_masks,
     processed.original_sizes,
