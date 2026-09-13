@@ -4,18 +4,18 @@ A mobile-first visual grounding exercise that helps people notice things around 
 
 ## Current flow
 
-1. Take a photo or choose one from the device.
-2. Tap one or more parts of an object to test local SAM segmentation, or drag a frame to test direct AI detection.
-3. Review either the SAM cutout or the high-resolution AI input crop beside the original photo.
-4. Transform the cutout into a rubber-stamp collage piece with an AI image-editing model.
-5. Keep collecting or tap **Done** whenever the collage feels ready.
-6. Arrange the collected cutouts into a collage.
+1. Describe a remembered touch and generate the journal background.
+2. Continue into SEE and take a photo or choose one from the device.
+3. Tap one or more parts of an object to test local SAM segmentation, or drag a frame to test direct AI detection.
+4. Review either the SAM cutout or the high-resolution AI input crop beside the original photo.
+5. Transform the cutout into a rubber-stamp collage piece with an AI image-editing model.
+6. Arrange the collected pieces over the generated tactile background.
 
 The prototype uses SvelteKit and runs image segmentation in the browser with Transformers.js and SlimSAM. The selected cutout is sent through the server to AI PRO API for the artistic transformation.
 
 ## TOUCH flow
 
-The `/touch` route translates one or two tactile words, a cold-to-warm value, and a 1–5 intensity into a procedural journal background. Temperature changes the texture structure rather than applying a blue-to-red color gradient, and the final background can be downloaded as a PNG.
+The `/touch` route is the first stage of the connected grounding flow. It translates one or two tactile words, a cold-to-warm value, and a 1–5 intensity into a procedural journal background. Temperature changes the texture structure rather than applying a blue-to-red color gradient. The background is carried into SEE and used as the final collage surface.
 
 ## Development
 

@@ -47,8 +47,8 @@
   function makeTexture() {
     if (typeof document === 'undefined') return '';
     const canvas = document.createElement('canvas');
-    canvas.width = 900;
-    canvas.height = 1200;
+    canvas.width = 600;
+    canvas.height = 800;
     const context = canvas.getContext('2d');
     if (!context) return '';
 
@@ -137,6 +137,20 @@
     link.download = 'touch-journal-background.png';
     link.click();
   }
+
+  function continueToSee() {
+    try {
+      sessionStorage.setItem('grounding-touch-background', textureUrl);
+      sessionStorage.setItem('grounding-touch-summary', JSON.stringify({
+        textures: selectedTextures,
+        temperature,
+        intensity
+      }));
+    } catch (error) {
+      console.warn('Could not store the touch background.', error);
+    }
+    window.location.href = '/?start=see';
+  }
 </script>
 
 <svelte:head>
@@ -203,7 +217,8 @@
           <div><dt>Intensity</dt><dd>{intensity} / 5</dd></div>
         </dl>
         <p class="translation">{selectedTextures.join(' + ').toLowerCase()} + {temperatureWord()} + {intensityWord()}</p>
-        <div class="actions"><button class="secondary" onclick={() => step = 'texture'}>Adjust</button><button class="primary" onclick={downloadTexture}>Save background <span>↓</span></button></div>
+        <div class="actions"><button class="secondary" onclick={() => step = 'texture'}>Adjust</button><button class="primary" onclick={continueToSee}>Continue to SEE <span>→</span></button></div>
+        <button class="download-link" onclick={downloadTexture}>Download this background</button>
       {/if}
     </div>
 
@@ -261,6 +276,7 @@
   .summary dt { color:#777a72; }
   .summary dd { margin:0; text-transform:capitalize; text-align:right; }
   .translation { font-family:Georgia,serif; font-style:italic; font-size:19px; color:#646a63; margin:0 0 30px; }
+  .download-link { margin-top:16px; padding:0; border:0; background:transparent; color:#666b65; cursor:pointer; font-size:11px; text-decoration:underline; text-underline-offset:4px; }
   .texture-panel { width:min(100%,560px); aspect-ratio:3/4; position:relative; justify-self:start; overflow:hidden; background:#ebe7dd; box-shadow:0 28px 70px rgba(38,42,36,.16); }
   .texture-panel img { width:100%; height:100%; object-fit:cover; display:block; }
   .texture-panel::after { content:""; position:absolute; inset:0; box-shadow:inset 0 0 90px rgba(92,82,64,.1); pointer-events:none; }
