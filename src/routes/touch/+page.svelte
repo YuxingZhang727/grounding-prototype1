@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
+
   type TouchStep = 'texture' | 'temperature' | 'intensity' | 'result';
 
   const textureOptions = ['Soft', 'Rough', 'Smooth', 'Bumpy', 'Fuzzy', 'Sticky', 'Firm', 'Slippery'];
@@ -8,6 +10,12 @@
   let temperature = $state(35);
   let intensity = $state(3);
   let textureUrl = $state('');
+
+  onMount(() => {
+    if (new URLSearchParams(window.location.search).get('flow') !== 'grounding') {
+      window.location.replace('/');
+    }
+  });
 
   function toggleTexture(texture: string) {
     if (selectedTextures.includes(texture)) {

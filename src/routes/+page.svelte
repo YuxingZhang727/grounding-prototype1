@@ -82,7 +82,7 @@
   }
 
   function beginGrounding() {
-    window.location.href = '/touch';
+    window.location.href = '/touch?flow=grounding';
   }
 
   function stopCamera() {
