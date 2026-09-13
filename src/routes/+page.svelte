@@ -624,12 +624,7 @@
         {/if}
       </div>
       {#if segmentedImage}
-        <p class="local-note">
-          {segmentScore
-            ? `Mask score ${Math.round(Math.max(0, Math.min(1, segmentScore)) * 100)}%.`
-            : 'Mask score unavailable.'}
-          {transformStatus || 'Ready to make one rubber-stamp collage piece.'}
-        </p>
+        <p class="local-note">{transformStatus || (directAiMode ? 'Ready for AI to detect the object in this frame.' : 'Ready to make one rubber-stamp collage piece.')}</p>
       {/if}
     </section>
 
