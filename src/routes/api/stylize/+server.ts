@@ -8,6 +8,8 @@ Transform the uploaded isolated object into one standalone rubber-stamp collage 
 
 Preserve the exact identity, silhouette, proportions, orientation, recognizable features, spatial relationships, and essential original colors of the object. Do not replace, stretch, distort, move, or invent the subject. Simplify it to the minimum visual information needed for immediate recognition; remove tiny clutter, repetitive detail, visual noise, and irrelevant remnants from the source background.
 
+If the object is unmistakably incomplete because the segmentation mask accidentally cut away part of it, naturally reconstruct only the clearly missing portion by continuing the visible shape, structure, and material. Make the object feel whole, but do not redesign it, add new features, or guess beyond what the visible evidence strongly supports.
+
 Render the object as a small, art-publication-quality, multicolor hand-carved rubber stamp: authentic relief-print texture, irregular hand-cut engraving marks, slightly uneven ink coverage, restrained registration offsets, matte paper grain, and extremely subtle fine film noise. Extract 2–4 muted spot-ink colors from the source. Prefer carbon black, deep green, brick red, ochre, slate blue, or taupe only when they suit the source; retain one small area of its most distinctive color.
 
 Add a continuous, clean, warm-white die-cut border around the entire outer silhouette. The border should feel approximately 1 cm wide on a physical sticker, visually about 8–10% of the object's shorter dimension. Keep the border clearly visible and consistent around every edge and internal opening.
