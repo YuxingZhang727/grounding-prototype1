@@ -166,8 +166,10 @@
     const current = selectionPosition(event);
     const distance = Math.hypot(current.x - selectionStart.x, current.y - selectionStart.y);
     if (distance < 1.5) {
+      selectionBox = null;
       selectionPoints = [...selectionPoints, current];
     } else if (draftBox && draftBox.w > 1 && draftBox.h > 1) {
+      selectionPoints = [];
       selectionBox = draftBox;
     }
     selectionStart = null;
@@ -180,11 +182,16 @@
     if (isSegmenting) {
       segmentationQueued = true;
       segmentationRequest += 1;
+      segmentedImage = '';
+      segmentedOverlay = '';
+      segmentStatus = 'Updating the cutout…';
       return;
     }
     const request = ++segmentationRequest;
     isSegmenting = true;
     segmentError = '';
+    segmentedImage = '';
+    segmentedOverlay = '';
     transformedImage = '';
     transformStatus = '';
     segmentStatus = 'Preparing the photo…';
