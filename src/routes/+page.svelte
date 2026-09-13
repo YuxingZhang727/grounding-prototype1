@@ -397,7 +397,7 @@
             <img src={segmentedOverlay} alt="The selected object highlighted in the original scene" />
           </div>
           <div class="comparison-card stylized">
-            <span>Your artifact</span>
+            <span>{transformedImage ? 'Collage piece' : 'Cutout'}</span>
             {#if isTransforming}
               <div class="segment-loading" aria-live="polite">
                 <div class="scan-object"></div>
@@ -409,8 +409,8 @@
                 <img src={transformedImage} alt="The transformed object for collage" />
               </div>
             {:else}
-              <div class="style-pending">
-                <p>Turn this object into a rubber-stamp collage piece.</p>
+              <div class="checkerboard">
+                <img src={segmentedImage} alt="The separated object before artistic transformation" />
               </div>
             {/if}
           </div>
@@ -580,8 +580,6 @@
   .segment-preview.loading { grid-template-columns:1fr; background:#e8e5dc; }
   .segment-loading,.segment-failure { min-height:240px; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; color:#6d736d; position:relative; overflow:hidden; }
   .segment-loading p,.segment-failure p { max-width:310px; line-height:1.5; margin:24px 0 0; }
-  .style-pending { width:100%; height:100%; display:grid; place-items:center; background:#f0ede5; color:#8b8d82; padding:20px; text-align:center; }
-  .style-pending p { margin:0; line-height:1.4; font-size:13px; }
   .scan-object { width:132px; height:112px; border-radius:61% 39% 44% 56% / 38% 55% 45% 62%; background:#b9b7ae; opacity:.68; transform:rotate(-8deg); }
   .scan-line { position:absolute; width:190px; height:1px; background:#c54b34; box-shadow:0 0 14px #c54b34; animation:scan 2s ease-in-out infinite alternate; }
   @keyframes scan { from { transform:translateY(-72px); } to { transform:translateY(72px); } }
