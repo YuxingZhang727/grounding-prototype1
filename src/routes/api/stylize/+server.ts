@@ -1,20 +1,18 @@
 import { json } from '@sveltejs/kit';
 
-type TransformStyle = 'line-drawing' | 'paper-stamp' | 'watercolor' | 'ink-plaque';
+type Payload = { image?: string };
 
-type Payload = {
-  image?: string;
-  style?: TransformStyle;
-};
+const COLLAGE_PROMPT = `
+Transform the uploaded isolated object into one standalone rubber-stamp collage sticker.
 
-const stylePrompts: Record<TransformStyle, string> = {
-  'line-drawing': 'Create a delicate line drawing of the object, soft handmade paper collage style, with clean outlines and gentle shading. Keep transparent background and keep object composition obvious.',
-  'paper-stamp': 'Transform the object into a tactile paper-stamp collage style, like hand-cut layered paper and soft pastel ink, with subtle texture and no real-world context.',
-  watercolor: 'Convert to a soft watercolor collage illustration while keeping the object's shape and silhouette. Use muted calming tones and painterly brush textures.',
-  'ink-plaque': 'Turn into an ink-plate style graphic, with thick and thin ink strokes, high contrast and visible layered paper grain. Keep composition readable.'
-};
+Preserve the exact identity, silhouette, proportions, orientation, recognizable features, spatial relationships, and essential original colors of the object. Do not replace, stretch, distort, move, or invent the subject. Simplify it to the minimum visual information needed for immediate recognition; remove tiny clutter, repetitive detail, visual noise, and irrelevant remnants from the source background.
 
-const allowedStyles: TransformStyle[] = ['line-drawing', 'paper-stamp', 'watercolor', 'ink-plaque'];
+Render the object as a small, art-publication-quality, multicolor hand-carved rubber stamp: authentic relief-print texture, irregular hand-cut engraving marks, slightly uneven ink coverage, restrained registration offsets, matte paper grain, and extremely subtle fine film noise. Extract 2–4 muted spot-ink colors from the source. Prefer carbon black, deep green, brick red, ochre, slate blue, or taupe only when they suit the source; retain one small area of its most distinctive color.
+
+Add a continuous, clean, warm-white die-cut border around the entire outer silhouette. The border should feel approximately 1 cm wide on a physical sticker, visually about 8–10% of the object's shorter dimension. Keep the border clearly visible and consistent around every edge and internal opening.
+
+Output only this single sticker, centered and fully visible on a transparent background with generous empty padding. No scene, no poster, no split layout, no frame, no typography, no logo, no extra objects, and no multi-image collage. Do not crop any part of the sticker.
+`.trim();
 
 function parseBase64DataUrl(input: string) {
   const match = input.match(/^data:(image\/(?:png|jpeg|jpg|webp));base64,(.+)$/);
@@ -22,23 +20,21 @@ function parseBase64DataUrl(input: string) {
   return { mimeType: match[1], data: match[2] };
 }
 
-async function generateByOpenAI(imageData: string, style: TransformStyle) {
+async function generateByOpenAI(imageData: string) {
   const parsed = parseBase64DataUrl(imageData);
-  if (!parsed) {
-    return { ok: false, status: 400, message: 'Invalid image format' };
-  }
+  if (!parsed) return { ok: false, status: 400, message: 'Invalid image format' };
 
   const key = process.env.OPENAI_API_KEY;
-  if (!key) {
-    return { ok: false, status: 503, message: 'Server missing OPENAI_API_KEY.' };
-  }
+  if (!key) return { ok: false, status: 503, message: 'Server missing OPENAI_API_KEY.' };
 
   const body = new FormData();
   body.append('model', 'gpt-image-1');
-  body.append('prompt', stylePrompts[style]);
+  body.append('prompt', COLLAGE_PROMPT);
   body.append('size', '1024x1024');
+  body.append('quality', 'high');
+  body.append('background', 'transparent');
+  body.append('output_format', 'png');
   body.append('n', '1');
-  body.append('response_format', 'b64_json');
   body.append('image', new Blob([Buffer.from(parsed.data, 'base64')], { type: parsed.mimeType }), 'object.png');
 
   const response = await fetch('https://api.openai.com/v1/images/edits', {
@@ -70,18 +66,14 @@ export async function POST({ request }: { request: Request }) {
     return json({ success: false, error: 'Invalid JSON payload.' }, { status: 400 });
   }
 
-  const style = payload.style;
   if (!payload.image) {
     return json({ success: false, error: 'Missing image data.' }, { status: 400 });
   }
-  if (!style || !allowedStyles.includes(style)) {
-    return json({ success: false, error: 'Unsupported transform style.' }, { status: 400 });
-  }
 
-  const result = await generateByOpenAI(payload.image, style);
+  const result = await generateByOpenAI(payload.image);
   if (!result.ok || !result.image) {
     return json({ success: false, error: result.message || 'Transformation failed.' }, { status: result.status || 500 });
   }
 
-  return json({ success: true, image: result.image, source: 'openai-image-edit', style });
+  return json({ success: true, image: result.image, source: 'openai-image-edit' });
 }

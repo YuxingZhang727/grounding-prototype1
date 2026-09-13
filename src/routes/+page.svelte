@@ -10,7 +10,6 @@
     mode:'drag'|'resize'|'rotate'; index:number; startX:number; startY:number;
     original:Fragment; stage:DOMRect; centerX:number; centerY:number;
   };
-  type TransformStyle = 'line-drawing' | 'paper-stamp' | 'watercolor' | 'ink-plaque';
 
   let step: Step = 'welcome';
   let video: HTMLVideoElement;
@@ -34,16 +33,8 @@
   let fragments: Fragment[] = [];
   let activeFragment = -1;
   let gesture: Gesture | null = null;
-  let selectedStyle: TransformStyle = 'line-drawing';
   let isTransforming = false;
   let cameraReady = false;
-
-  const transformStyles: { id: TransformStyle; label: string }[] = [
-    { id: 'line-drawing', label: 'Line Drawing' },
-    { id: 'paper-stamp', label: 'Paper Stamp' },
-    { id: 'watercolor', label: 'Soft Watercolor' },
-    { id: 'ink-plaque', label: 'Ink Plaque' }
-  ];
 
   const placements = [
     { x: 12, y: 18, size: 31, rotation: -10 },
@@ -209,14 +200,7 @@
     step = 'arrange';
   }
 
-  function selectStyle(id: TransformStyle) {
-    if (selectedStyle === id) return;
-    selectedStyle = id;
-    transformedImage = '';
-    transformStatus = 'Style changed. Tap transform to refresh.';
-  }
-
-  async function stylizeLocally(sourceUrl: string, style: TransformStyle) {
+  async function stylizeLocally(sourceUrl: string) {
     const source = new Image();
     source.src = sourceUrl;
     await source.decode();
@@ -232,69 +216,17 @@
     if (!ctx) throw new Error('No canvas available in this browser.');
 
     ctx.clearRect(0, 0, width, height);
-    if (style === 'line-drawing') {
-      ctx.filter = 'grayscale(1) contrast(300%) brightness(110%)';
-      ctx.drawImage(source, 0, 0, width, height);
-      const data = ctx.getImageData(0, 0, width, height);
-      const pixels = data.data;
-      for (let i = 0; i < pixels.length; i += 4) {
-        const luma = pixels[i] * 0.2126 + pixels[i + 1] * 0.7152 + pixels[i + 2] * 0.0722;
-        const value = luma > 175 ? 255 : 16;
-        pixels[i] = value;
-        pixels[i + 1] = value;
-        pixels[i + 2] = value;
-      }
-      ctx.putImageData(data, 0, 0);
-      ctx.globalCompositeOperation = 'difference';
-      ctx.globalAlpha = 0.18;
-      ctx.fillStyle = '#f7f3eb';
-      ctx.fillRect(0, 0, width, height);
-    } else if (style === 'watercolor') {
-      ctx.filter = 'saturate(0.45) contrast(102%) brightness(102%) blur(0.6px)';
-      ctx.drawImage(source, 0, 0, width, height);
-      ctx.globalAlpha = 0.38;
-      ctx.filter = 'blur(8px) brightness(115%)';
-      ctx.drawImage(source, 2, 2, width - 2, height - 2);
-      ctx.globalAlpha = 1;
-      ctx.filter = 'none';
-      for (let i = 0; i < width * height * 0.004; i += 1) {
-        const x = Math.floor(Math.random() * width);
-        const y = Math.floor(Math.random() * height);
-        const size = 1 + Math.random() * 2.5;
-        ctx.fillStyle = `rgba(255,255,255,${Math.random() * 0.11})`;
-        ctx.beginPath();
-        ctx.ellipse(x, y, size, size * 0.55, 0, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    } else if (style === 'ink-plaque') {
-      ctx.filter = 'sepia(18%) contrast(125%) saturate(0.9)';
-      ctx.drawImage(source, 0, 0, width, height);
-      ctx.globalAlpha = 0.35;
-      ctx.fillStyle = '#151814';
-      ctx.fillRect(0, 0, width, height);
-      ctx.globalAlpha = 0.23;
-      for (let i = 0; i < 360; i += 1) {
-        const x = (Math.sin(i * 0.4) + 1) * width * 0.5;
-        const y = (Math.cos(i * 0.17) + 1) * height * 0.5;
-        const alpha = (Math.sin(i * 0.2) + 1.1) * 0.02;
-        ctx.fillStyle = `rgba(255,255,255,${alpha})`;
-        ctx.fillRect(x, y, 1.5, 1.5);
-      }
-      ctx.globalAlpha = 1;
-      ctx.filter = 'none';
-    } else {
-      ctx.filter = 'contrast(1.08) saturate(1.08) opacity(93%)';
-      ctx.drawImage(source, 0, 0, width, height);
-    }
+    ctx.filter = 'saturate(.62) contrast(1.18) sepia(.12) drop-shadow(0 0 10px #fff) drop-shadow(0 0 10px #fff)';
+    ctx.drawImage(source, 0, 0, width, height);
     ctx.globalCompositeOperation = 'source-over';
     return canvas.toDataURL('image/png');
   }
 
-  async function stylizeWithAI(sourceUrl: string, style: TransformStyle) {
+  async function stylizeWithAI(sourceUrl: string) {
     const response = await fetch('/api/stylize', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ image: sourceUrl, style })
+      body: JSON.stringify({ image: sourceUrl })
     });
 
     if (!response.ok) {
@@ -316,11 +248,11 @@
     isTransforming = true;
     transformStatus = 'Running artistic transform…';
     try {
-      transformedImage = await stylizeWithAI(segmentedImage, selectedStyle);
-      transformStatus = `AI transform ready (${selectedStyle.replace('-', ' ')})`;
+      transformedImage = await stylizeWithAI(segmentedImage);
+      transformStatus = 'Rubber-stamp collage piece ready.';
     } catch (error) {
       console.error(error);
-      transformedImage = await stylizeLocally(segmentedImage, selectedStyle);
+      transformedImage = await stylizeLocally(segmentedImage);
       const fallbackMessage = error instanceof Error ? error.message : 'Could not use AI conversion.';
       transformStatus = `${fallbackMessage} Using local style rendering.`;
     } finally {
@@ -470,7 +402,7 @@
               <div class="segment-loading" aria-live="polite">
                 <div class="scan-object"></div>
                 <span class="scan-line"></span>
-                <p>Applying your selected style…</p>
+                <p>Making your rubber-stamp collage piece…</p>
               </div>
             {:else if transformedImage}
               <div class="checkerboard">
@@ -478,7 +410,7 @@
               </div>
             {:else}
               <div class="style-pending">
-                <p>Pick a style and tap transform.</p>
+                <p>Turn this object into a rubber-stamp collage piece.</p>
               </div>
             {/if}
           </div>
@@ -497,26 +429,13 @@
         {/if}
       </div>
 
-      <div class="style-controls">
-        {#each transformStyles as style}
-          <button
-            type="button"
-            class="style-pill"
-            class:active={selectedStyle === style.id}
-            onclick={() => selectStyle(style.id)}
-          >
-            {style.label}
-          </button>
-        {/each}
-      </div>
-
       <div class="segment-actions">
         <button class="secondary" onclick={chooseAgain}>Choose again</button>
         {#if !transformedImage && segmentedImage}
-          <button class="primary compact" onclick={transformCutout} disabled={isTransforming}>Transform artifact <span>→</span></button>
+          <button class="primary compact" onclick={transformCutout} disabled={isTransforming}>Make collage piece <span>→</span></button>
         {:else if transformedImage}
           <button class="secondary compact" onclick={keepCutout}>Use transformed piece <span>→</span></button>
-          <button class="primary compact" onclick={() => { transformedImage = ''; transformStatus = ''; }}>Re-transform <span>↻</span></button>
+          <button class="primary compact" onclick={transformCutout} disabled={isTransforming}>Try again <span>↻</span></button>
         {/if}
       </div>
       {#if segmentedImage}
@@ -524,7 +443,7 @@
           {segmentScore
             ? `Mask score ${Math.round(Math.max(0, Math.min(1, segmentScore)) * 100)}%.`
             : 'Mask score unavailable.'}
-          {transformStatus || 'Choose a style and tap transform.'}
+          {transformStatus || 'Ready to make one rubber-stamp collage piece.'}
         </p>
       {/if}
     </section>
@@ -663,9 +582,6 @@
   .segment-loading p,.segment-failure p { max-width:310px; line-height:1.5; margin:24px 0 0; }
   .style-pending { width:100%; height:100%; display:grid; place-items:center; background:#f0ede5; color:#8b8d82; padding:20px; text-align:center; }
   .style-pending p { margin:0; line-height:1.4; font-size:13px; }
-  .style-controls { width:min(900px,100%); display:flex; flex-wrap:wrap; justify-content:center; gap:8px; margin:0 0 12px; }
-  .style-pill { border:1px solid #bcbab3; border-radius:999px; background:#fafaf7; padding:8px 14px; font-size:11px; letter-spacing:.09em; text-transform:uppercase; cursor:pointer; }
-  .style-pill.active { background:#1b211c; color:#fff; border-color:#1b211c; }
   .scan-object { width:132px; height:112px; border-radius:61% 39% 44% 56% / 38% 55% 45% 62%; background:#b9b7ae; opacity:.68; transform:rotate(-8deg); }
   .scan-line { position:absolute; width:190px; height:1px; background:#c54b34; box-shadow:0 0 14px #c54b34; animation:scan 2s ease-in-out infinite alternate; }
   @keyframes scan { from { transform:translateY(-72px); } to { transform:translateY(72px); } }
