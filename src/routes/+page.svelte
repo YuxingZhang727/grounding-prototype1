@@ -484,7 +484,10 @@
         <p>Take a moment to look around you.</p>
         <p>Notice the things that draw your attention.</p>
       </div>
-      <button class="primary" onclick={begin}>Start looking <span>↗</span></button>
+      <div class="welcome-actions">
+        <button class="primary" onclick={begin}>Start looking <span>↗</span></button>
+        <a class="touch-link" href="/touch">Explore TOUCH <span>→</span></a>
+      </div>
     </section>
 
   {:else if step === 'camera'}
@@ -733,6 +736,9 @@
   h1 { font-family:Georgia,serif; font-weight:400; letter-spacing:.2em; font-size:clamp(82px,15vw,160px); line-height:.8; margin:0 0 54px; transform:translateX(.1em); }
   .intro { font-family:Georgia,serif; font-size:clamp(19px,2.4vw,27px); line-height:1.45; margin-bottom:42px; }
   .intro p { margin:0; }
+  .welcome-actions { display:flex; flex-direction:column; align-items:center; gap:18px; }
+  .touch-link { color:#5e645e; text-decoration:none; font-size:11px; font-weight:650; letter-spacing:.15em; text-transform:uppercase; }
+  .touch-link span { margin-left:8px; color:#c54b34; }
   .primary { border:0; border-radius:100px; background:#1b211c; color:#fff; height:58px; padding:0 26px; min-width:190px; cursor:pointer; display:inline-flex; align-items:center; justify-content:space-between; gap:28px; transition:transform .2s, background .2s; }
   .primary:hover { transform:translateY(-2px); background:#c54b34; }
   .primary span { font-size:18px; }

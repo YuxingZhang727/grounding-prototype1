@@ -13,6 +13,10 @@ A mobile-first visual grounding exercise that helps people notice things around 
 
 The prototype uses SvelteKit and runs image segmentation in the browser with Transformers.js and SlimSAM. The selected cutout is sent through the server to AI PRO API for the artistic transformation.
 
+## TOUCH flow
+
+The `/touch` route translates one or two tactile words, a cold-to-warm value, and a 1–5 intensity into a procedural journal background. Temperature changes the texture structure rather than applying a blue-to-red color gradient, and the final background can be downloaded as a PNG.
+
 ## Development
 
 ```sh
