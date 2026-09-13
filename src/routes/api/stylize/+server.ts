@@ -1,4 +1,5 @@
 import { json } from '@sveltejs/kit';
+import { env } from '$env/dynamic/private';
 
 type Payload = { image?: string };
 
@@ -24,7 +25,7 @@ async function generateByOpenAI(imageData: string) {
   const parsed = parseBase64DataUrl(imageData);
   if (!parsed) return { ok: false, status: 400, message: 'Invalid image format' };
 
-  const key = process.env.OPENAI_API_KEY;
+  const key = env.OPENAI_API_KEY;
   if (!key) return { ok: false, status: 503, message: 'Server missing OPENAI_API_KEY.' };
 
   const body = new FormData();
