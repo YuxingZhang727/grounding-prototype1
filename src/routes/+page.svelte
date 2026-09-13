@@ -44,6 +44,18 @@
     { x: 10, y: 65, size: 29, rotation: 7 }
   ];
 
+  function placementFor(index: number) {
+    if (placements[index]) return placements[index];
+    const column = index % 3;
+    const row = Math.floor(index / 3) % 3;
+    return {
+      x: 8 + column * 29 + ((index * 7) % 9),
+      y: 8 + row * 28 + ((index * 11) % 8),
+      size: 22 + (index % 4) * 2,
+      rotation: ((index * 17) % 35) - 17
+    };
+  }
+
   async function begin() {
     step = 'camera';
     cameraMessage = '';
@@ -168,7 +180,7 @@
       noticed,
       image: segmentedImage,
       aspectRatio: segmentedAspectRatio,
-      ...placements[index]
+      ...placementFor(index)
     }];
     step = 'fragment';
   }
@@ -176,12 +188,16 @@
   function continueLooking() {
     capturedImage = '';
     clearSegmentation();
-    if (fragments.length === 5) {
-      activeFragment = 0;
-      step = 'arrange';
-    } else {
-      begin();
-    }
+    begin();
+  }
+
+  function finishCollecting() {
+    if (!fragments.length) return;
+    stopCamera();
+    capturedImage = '';
+    clearSegmentation();
+    activeFragment = 0;
+    step = 'arrange';
   }
 
   function fragmentPointerDown(event: PointerEvent, index: number, mode: Gesture['mode']) {
@@ -231,16 +247,17 @@
 
 <svelte:head>
   <title>SEE — A noticing practice</title>
-  <meta name="description" content="Notice five things around you and arrange them into a small abstract collage." />
+  <meta name="description" content="Notice things around you and arrange them into a small abstract collage." />
 </svelte:head>
 
 <main class:dark={step === 'camera'} class:canvas-mode={step === 'arrange' || step === 'finish'}>
   <header>
     <button class="wordmark" onclick={restart} aria-label="Return to start">SEE<span>·</span></button>
     {#if step !== 'welcome' && step !== 'finish'}
-      <div class="progress" aria-label={`${fragments.length} of 5 things noticed`}>
-        {#each Array(5) as _, i}
-          <span class:filled={i < fragments.length}></span>
+      <div class="progress" aria-label={`${fragments.length} things gathered`}>
+        <span class="gathered-count">{fragments.length} gathered</span>
+        {#each fragments as _}
+          <i></i>
         {/each}
       </div>
     {/if}
@@ -252,7 +269,7 @@
       <h1>SEE</h1>
       <div class="intro">
         <p>Take a moment to look around you.</p>
-        <p>Find 5 things you can see right now.</p>
+        <p>Notice the things that draw your attention.</p>
       </div>
       <button class="primary" onclick={begin}>Start looking <span>↗</span></button>
     </section>
@@ -260,7 +277,7 @@
   {:else if step === 'camera'}
     <section class="camera-screen">
       <div class="camera-copy">
-        <span class="count-label">Thing {fragments.length + 1} of 5</span>
+        <span class="count-label">A new thing</span>
         <h2>Find something that<br />catches your attention.</h2>
       </div>
       <div class="viewfinder">
@@ -281,7 +298,7 @@
   {:else if step === 'crop'}
     <section class="focus-screen">
       <div class="section-heading">
-        <span class="count-label">Thing {fragments.length + 1} of 5</span>
+        <span class="count-label">Thing {fragments.length + 1}</span>
         <h2>What caught your attention?</h2>
         <p>Draw a loose frame around it.</p>
       </div>
@@ -299,7 +316,7 @@
   {:else if step === 'segment'}
     <section class="segment-screen">
       <div class="section-heading">
-        <span class="count-label">Thing {fragments.length + 1} of 5</span>
+        <span class="count-label">Thing {fragments.length + 1}</span>
         <h2>Separating what you saw.</h2>
         <p>{segmentError || segmentStatus}</p>
       </div>
@@ -344,7 +361,7 @@
 
   {:else if step === 'notice'}
     <section class="notice-screen">
-      <span class="count-label">Thing {fragments.length + 1} of 5</span>
+      <span class="count-label">Thing {fragments.length + 1}</span>
       <div class="color-orbit" style={`--sample:${sampledColor}`}><span></span></div>
       <h2>What did you notice<br />most about it?</h2>
       <div class="choices" style={`--sample:${sampledColor}`}>
@@ -364,22 +381,25 @@
         <img class={`object-fragment ${latest.noticed.toLowerCase()}`} src={latest.image} alt="Your separated object" style={`--color:${latest.color}`} />
         <span class="orbit-line"></span>
       </div>
-      <h2>{fragments.length} of 5 things noticed</h2>
+      <h2>{fragments.length} {fragments.length === 1 ? 'thing' : 'things'} noticed</h2>
       <p class="fragment-note">You noticed its {latest.noticed.toLowerCase()}.</p>
-      <button class="primary" onclick={continueLooking}>{fragments.length === 5 ? 'Make your collage' : 'Find another'} <span>→</span></button>
+      <div class="fragment-actions">
+        <button class="secondary" onclick={continueLooking}>Notice another</button>
+        <button class="primary compact" onclick={finishCollecting}>Done <span>→</span></button>
+      </div>
     </section>
 
   {:else if step === 'arrange' || step === 'finish'}
     <section class="arrange-screen">
       <div class="arrange-heading">
         {#if step === 'arrange'}
-          <span class="count-label">5 things, gathered</span>
+          <span class="count-label">{fragments.length} {fragments.length === 1 ? 'thing' : 'things'}, gathered</span>
           <h2>Arrange what you noticed.</h2>
           <p>Drag the pieces. Use the handles to resize and rotate.</p>
         {:else}
           <span class="count-label">Your collage</span>
           <h2>This is what you noticed,<br />here and now.</h2>
-          <p>Made from 5 things you saw around you.</p>
+          <p>Made from the things you noticed around you.</p>
         {/if}
       </div>
       <div class="collage-shell">
@@ -404,7 +424,7 @@
               {/if}
             </div>
           {/each}
-          <span class="canvas-mark">SEE / 05</span>
+          <span class="canvas-mark">SEE / {String(fragments.length).padStart(2, '0')}</span>
         </div>
       </div>
       {#if step === 'arrange'}
@@ -423,15 +443,15 @@
   :global(button), :global(label) { font: inherit; }
   :global(button) { color: inherit; }
 
-  main { --ink:#1b211c; --paper:#f3f0e9; min-height: 100svh; background: var(--paper); overflow: hidden; position: relative; transition: background .3s ease; }
+  main { --ink:#1b211c; --paper:#f3f0e9; min-height: 100svh; background: var(--paper); overflow-x:hidden; position: relative; transition: background .3s ease; }
   main::before { content:""; position:fixed; inset:0; pointer-events:none; opacity:.22; background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.15'/%3E%3C/svg%3E"); mix-blend-mode:multiply; }
   main.dark { --ink:#f3f0e9; --paper:#17201b; }
   header { height:84px; padding:0 clamp(24px,5vw,72px); display:flex; align-items:center; justify-content:space-between; position:absolute; top:0; left:0; right:0; z-index:30; }
   .wordmark { border:0; background:none; padding:0; font-family:Georgia,serif; font-size:22px; letter-spacing:.16em; cursor:pointer; }
   .wordmark span { color:#c54b34; }
-  .progress { display:flex; gap:8px; }
-  .progress span { width:22px; height:2px; background:color-mix(in srgb, var(--ink) 20%, transparent); }
-  .progress span.filled { background:#c54b34; }
+  .progress { display:flex; align-items:center; gap:6px; }
+  .progress .gathered-count { margin-right:4px; text-transform:uppercase; font-size:9px; font-weight:650; letter-spacing:.15em; opacity:.7; }
+  .progress i { display:block; width:7px; height:7px; border-radius:50%; background:#c54b34; }
   section { position:relative; z-index:1; min-height:100svh; }
   .welcome { display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:110px 24px 60px; }
   .eyebrow,.count-label { text-transform:uppercase; font-size:11px; font-weight:650; letter-spacing:.2em; }
@@ -472,25 +492,25 @@
   .selection span { position:absolute; width:10px; height:10px; border:1px solid white; background:#f3f0e9; border-radius:50%; }
   .selection span:nth-child(1){left:-5px;top:-5px}.selection span:nth-child(2){right:-5px;top:-5px}.selection span:nth-child(3){right:-5px;bottom:-5px}.selection span:nth-child(4){left:-5px;bottom:-5px}
 
-  .segment-screen { padding:104px 24px 34px; display:flex; flex-direction:column; align-items:center; }
+  .segment-screen { height:100svh; min-height:620px; padding:92px 24px 24px; display:flex; flex-direction:column; align-items:center; overflow-y:auto; }
   .segment-screen .section-heading { margin-bottom:22px; }
   .segment-screen .section-heading p { min-height:1.4em; }
-  .segment-preview { width:min(900px,100%); flex:1; min-height:320px; max-height:58svh; display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:24px; }
-  .comparison-card { min-height:300px; position:relative; background:#e8e5dc; overflow:hidden; display:grid; place-items:center; }
+  .segment-preview { width:min(900px,100%); height:min(500px,48svh); min-height:240px; flex:1 1 auto; display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:14px; margin-bottom:18px; overflow:hidden; }
+  .comparison-card { min-width:0; min-height:0; position:relative; background:#e8e5dc; overflow:hidden; display:grid; place-items:center; }
   .comparison-card > span { position:absolute; z-index:2; left:14px; top:13px; padding:7px 10px; background:rgba(20,25,21,.72); color:#fff; border-radius:100px; font-size:10px; letter-spacing:.12em; text-transform:uppercase; backdrop-filter:blur(8px); }
   .comparison-card > img,.checkerboard > img { width:100%; height:100%; object-fit:contain; }
   .comparison-card.original > img { object-fit:cover; }
   .checkerboard { width:100%; height:100%; display:grid; place-items:center; padding:7%; background-color:#eeece6; background-image:linear-gradient(45deg,#dedbd2 25%,transparent 25%),linear-gradient(-45deg,#dedbd2 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#dedbd2 75%),linear-gradient(-45deg,transparent 75%,#dedbd2 75%); background-size:24px 24px; background-position:0 0,0 12px,12px -12px,-12px 0; }
   .checkerboard > img { filter:drop-shadow(0 14px 18px rgba(25,30,25,.18)); }
   .segment-preview.loading { grid-template-columns:1fr; background:#e8e5dc; }
-  .segment-loading,.segment-failure { min-height:320px; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; color:#6d736d; position:relative; overflow:hidden; }
+  .segment-loading,.segment-failure { min-height:240px; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; color:#6d736d; position:relative; overflow:hidden; }
   .segment-loading p,.segment-failure p { max-width:310px; line-height:1.5; margin:24px 0 0; }
   .scan-object { width:132px; height:112px; border-radius:61% 39% 44% 56% / 38% 55% 45% 62%; background:#b9b7ae; opacity:.68; transform:rotate(-8deg); }
   .scan-line { position:absolute; width:190px; height:1px; background:#c54b34; box-shadow:0 0 14px #c54b34; animation:scan 2s ease-in-out infinite alternate; }
   @keyframes scan { from { transform:translateY(-72px); } to { transform:translateY(72px); } }
   .failure-mark { width:64px; height:64px; border:1px solid #b5b3aa; border-radius:50%; display:grid; place-items:center; font-family:Georgia,serif; font-size:34px; }
   .segment-failure h3 { font-family:Georgia,serif; color:var(--ink); font-size:27px; font-weight:400; margin:22px 0 -12px; }
-  .segment-actions { display:flex; align-items:center; justify-content:center; gap:12px; }
+  .segment-actions { flex:0 0 auto; display:flex; align-items:center; justify-content:center; gap:12px; position:relative; z-index:3; }
   .local-note { margin:11px 0 0; color:#81847c; font-size:10px; letter-spacing:.08em; }
 
   .notice-screen,.fragment-screen { display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:100px 24px 50px; }
@@ -514,6 +534,7 @@
   .orbit-line { position:absolute; width:88%; height:88%; border:1px solid #c5c3ba; border-radius:50%; }
   .fragment-screen h2 { font-size:32px; margin:0; }
   .fragment-note { color:#6d736d; margin:6px 0 26px; }
+  .fragment-actions { display:flex; align-items:center; justify-content:center; gap:12px; }
 
   .arrange-screen { padding:96px clamp(22px,5vw,70px) 34px; display:grid; grid-template-columns:minmax(270px, .7fr) minmax(400px,1.3fr); grid-template-rows:1fr auto; gap:28px 5vw; align-items:center; max-width:1400px; margin:auto; }
   .arrange-heading h2 { font-size:clamp(40px,5vw,68px); }
@@ -547,12 +568,16 @@
     .arrange-screen > .primary,.arrange-screen > .secondary { align-self:center; }
     .collage { width:min(100%,540px); }
     .notice-screen .count-label { top:90px; }
-    .segment-screen { padding:82px 16px 24px; }
+    .segment-screen { min-height:540px; padding:76px 14px 16px; }
+    .segment-screen .section-heading { margin-bottom:12px; }
     .segment-screen .section-heading h2 { font-size:32px; }
-    .segment-preview { grid-template-columns:1fr 1fr; min-height:260px; max-height:46svh; gap:7px; }
-    .comparison-card { min-height:260px; }
+    .segment-preview { grid-template-columns:minmax(0,1fr) minmax(0,1fr); height:min(370px,42svh); min-height:190px; gap:7px; margin-bottom:14px; }
+    .comparison-card { min-height:0; }
     .comparison-card > span { left:8px; top:8px; font-size:8px; }
     .checkerboard { padding:5%; background-size:18px 18px; background-position:0 0,0 9px,9px -9px,-9px 0; }
+    .segment-actions .secondary,.segment-actions .primary { min-width:0; padding-left:18px; padding-right:18px; }
+    .fragment-actions { flex-direction:column-reverse; width:min(300px,100%); }
+    .fragment-actions button { width:100%; }
   }
 
   @media (prefers-reduced-motion: reduce) { * { transition:none!important; } }

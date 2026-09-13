@@ -1,6 +1,6 @@
 # SEE — Grounding Collage Prototype
 
-A mobile-first visual grounding exercise that helps people notice five things around them, separate those objects from a photo, and arrange the resulting cutouts into a personal collage.
+A mobile-first visual grounding exercise that helps people notice things around them, separate those objects from a photo, and arrange the resulting cutouts into a personal collage.
 
 ## Current flow
 
@@ -8,7 +8,8 @@ A mobile-first visual grounding exercise that helps people notice five things ar
 2. Draw a loose frame around an object.
 3. Separate the object locally with a lightweight Segment Anything model.
 4. Notice its color, shape, or texture.
-5. Arrange five collected cutouts into a collage.
+5. Keep collecting or tap **Done** whenever the collage feels ready.
+6. Arrange the collected cutouts into a collage.
 
 The prototype uses SvelteKit and runs image segmentation in the browser with Transformers.js and SlimSAM. Photos are processed locally rather than uploaded to an application server.
 
