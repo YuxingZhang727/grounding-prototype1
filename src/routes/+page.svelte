@@ -36,6 +36,7 @@
   let gesture: Gesture | null = null;
   let selectedStyle: TransformStyle = 'line-drawing';
   let isTransforming = false;
+  let cameraReady = false;
 
   const transformStyles: { id: TransformStyle; label: string }[] = [
     { id: 'line-drawing', label: 'Line Drawing' },
@@ -68,6 +69,7 @@
     step = 'camera';
     cameraMessage = '';
     await tick();
+    cameraReady = false;
     try {
       stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: { ideal: 'environment' } },
@@ -75,6 +77,7 @@
       });
       video.srcObject = stream;
       await video.play();
+      cameraReady = true;
     } catch (error) {
       cameraMessage = 'Camera unavailable here. You can choose a photo instead.';
     }
@@ -86,7 +89,7 @@
   }
 
   function takePhoto() {
-    if (!video?.videoWidth) return;
+    if (!video?.videoWidth || !cameraReady) return;
     const canvas = document.createElement('canvas');
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
@@ -124,7 +127,6 @@
     transformStatus = '';
     segmentError = '';
     isTransforming = false;
-    transformMode = '';
   }
 
   function cropPointerDown(event: PointerEvent) {
@@ -416,7 +418,9 @@
       </div>
       <div class="camera-actions">
         <label class="text-button">Choose photo<input type="file" accept="image/*" capture="environment" onchange={choosePhoto} /></label>
-        <button class="shutter" onclick={takePhoto} aria-label="Take photo"><span></span></button>
+        <button class="shutter" class:disabled={!cameraReady} onclick={takePhoto} disabled={!cameraReady} aria-label="Take photo" type="button">
+          <span></span>
+        </button>
         <span class="action-spacer"></span>
       </div>
     </section>
