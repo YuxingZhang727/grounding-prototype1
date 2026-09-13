@@ -469,13 +469,13 @@
 </script>
 
 <svelte:head>
-  <title>SEE — A noticing practice</title>
-  <meta name="description" content="Notice things around you and arrange them into a small abstract collage." />
+  <title>GROUNDING — Feel the present</title>
+  <meta name="description" content="Translate touch and sight into a personal grounding collage." />
 </svelte:head>
 
 <main class:dark={step === 'camera'} class:canvas-mode={step === 'arrange' || step === 'finish'}>
   <header>
-    <button class="wordmark" onclick={restart} aria-label="Return to start">SEE<span>·</span></button>
+    <button class="wordmark" onclick={restart} aria-label="Return to start">{step === 'welcome' ? 'GROUNDING' : 'SEE'}<span>·</span></button>
     {#if step !== 'welcome' && step !== 'finish'}
       <div class="progress" aria-label={`${fragments.length} things gathered`}>
         <span class="gathered-count">{fragments.length} gathered</span>
@@ -488,11 +488,10 @@
 
   {#if step === 'welcome'}
     <section class="welcome">
-      <p class="eyebrow">A quiet looking practice</p>
-      <h1>SEE</h1>
+      <p class="eyebrow">A personalized grounding practice</p>
+      <h1>GROUNDING</h1>
       <div class="intro">
-        <p>Take a moment to look around you.</p>
-        <p>Notice the things that draw your attention.</p>
+        <p>Take a moment to feel the present.</p>
       </div>
       <button class="primary" onclick={beginGrounding}>Start grounding <span>↗</span></button>
     </section>
@@ -741,7 +740,7 @@
   .welcome { display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:110px 24px 60px; }
   .eyebrow,.count-label { text-transform:uppercase; font-size:11px; font-weight:650; letter-spacing:.2em; }
   .eyebrow { color:#7d8075; margin:0 0 24px; }
-  h1 { font-family:Georgia,serif; font-weight:400; letter-spacing:.2em; font-size:clamp(82px,15vw,160px); line-height:.8; margin:0 0 54px; transform:translateX(.1em); }
+  h1 { font-family:Georgia,serif; font-weight:400; letter-spacing:.12em; font-size:clamp(46px,9vw,118px); line-height:.86; margin:0 0 54px; transform:translateX(.06em); }
   .intro { font-family:Georgia,serif; font-size:clamp(19px,2.4vw,27px); line-height:1.45; margin-bottom:42px; }
   .intro p { margin:0; }
   .primary { border:0; border-radius:100px; background:#1b211c; color:#fff; height:58px; padding:0 26px; min-width:190px; cursor:pointer; display:inline-flex; align-items:center; justify-content:space-between; gap:28px; transition:transform .2s, background .2s; }

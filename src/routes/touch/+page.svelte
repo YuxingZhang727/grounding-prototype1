@@ -160,8 +160,8 @@
 
 <main>
   <header>
-    <a class="wordmark" href="/">SEE<span>·</span></a>
-    <span class="touch-mark">TOUCH</span>
+    <a class="wordmark" href="/">GROUNDING<span>·</span></a>
+    <span class="touch-mark">01 · TOUCH</span>
   </header>
 
   <section class="touch-layout">
