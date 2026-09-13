@@ -87,16 +87,17 @@ export async function segmentWithPrompts(
     Math.max(0, Math.min(height - 1, Math.round((point.y / 100) * height)))
   ]);
   const processorOptions: Record<string, unknown> = {};
-  if (inputPoints.length) {
-    processorOptions.input_points = [inputPoints];
-    processorOptions.input_labels = [inputPoints.map(() => 1)];
-  }
   if (selectionBox) {
     const x1 = Math.max(0, Math.round((selectionBox.x / 100) * width));
     const y1 = Math.max(0, Math.round((selectionBox.y / 100) * height));
     const x2 = Math.min(width, Math.round(((selectionBox.x + selectionBox.w) / 100) * width));
     const y2 = Math.min(height, Math.round(((selectionBox.y + selectionBox.h) / 100) * height));
     processorOptions.input_boxes = [[[x1, y1, x2, y2]]];
+    if (!inputPoints.length) inputPoints.push([(x1 + x2) / 2, (y1 + y2) / 2]);
+  }
+  if (inputPoints.length) {
+    processorOptions.input_points = [inputPoints];
+    processorOptions.input_labels = [inputPoints.map(() => 1)];
   }
 
   onProgress('Looking closely at the object…');
