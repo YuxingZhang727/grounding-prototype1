@@ -13,7 +13,6 @@
 
   let step: Step = 'welcome';
   let video: HTMLVideoElement;
-  let imageElement: HTMLImageElement;
   let cropStage: HTMLDivElement;
   let collageStage: HTMLDivElement;
   let stream: MediaStream | null = null;
@@ -27,9 +26,6 @@
   let transformStatus = '';
   let segmentError = '';
   let cameraMessage = '';
-  let selection = { x: 20, y: 20, w: 60, h: 60 };
-  let selecting = false;
-  let selectionStart: { x:number; y:number } | null = null;
   let fragments: Fragment[] = [];
   let activeFragment = -1;
   let gesture: Gesture | null = null;
@@ -90,7 +86,6 @@
     capturedImage = canvas.toDataURL('image/jpeg', 0.9);
     clearSegmentation();
     stopCamera();
-    selection = { x: 20, y: 20, w: 60, h: 60 };
     step = 'crop';
   }
 
@@ -102,7 +97,6 @@
       capturedImage = String(reader.result);
       clearSegmentation();
       stopCamera();
-      selection = { x: 20, y: 20, w: 60, h: 60 };
       step = 'crop';
     };
     reader.readAsDataURL(file);
@@ -120,42 +114,16 @@
     isTransforming = false;
   }
 
-  function cropPointerDown(event: PointerEvent) {
+  async function chooseObject(event: PointerEvent) {
     const box = cropStage.getBoundingClientRect();
     const x = Math.max(0, Math.min(100, ((event.clientX - box.left) / box.width) * 100));
     const y = Math.max(0, Math.min(100, ((event.clientY - box.top) / box.height) * 100));
-    selectionStart = { x, y };
-    selection = { x, y, w: 1, h: 1 };
-    selecting = true;
-    cropStage.setPointerCapture(event.pointerId);
-  }
-
-  function cropPointerMove(event: PointerEvent) {
-    if (!selecting || !selectionStart) return;
-    const box = cropStage.getBoundingClientRect();
-    const x = Math.max(0, Math.min(100, ((event.clientX - box.left) / box.width) * 100));
-    const y = Math.max(0, Math.min(100, ((event.clientY - box.top) / box.height) * 100));
-    selection = {
-      x: Math.min(x, selectionStart.x),
-      y: Math.min(y, selectionStart.y),
-      w: Math.max(2, Math.abs(x - selectionStart.x)),
-      h: Math.max(2, Math.abs(y - selectionStart.y))
-    };
-  }
-
-  function cropPointerUp() {
-    selecting = false;
-    selectionStart = null;
-  }
-
-  async function useSelection() {
-    if (selection.w < 3 || selection.h < 3) return;
     clearSegmentation();
     segmentStatus = 'Preparing the photo…';
     step = 'segment';
     try {
-      const { segmentSelection } = await import('$lib/segmenter');
-      const result = await segmentSelection(capturedImage, selection, (message) => segmentStatus = message);
+      const { segmentAtPoint } = await import('$lib/segmenter');
+      const result = await segmentAtPoint(capturedImage, { x, y }, (message) => segmentStatus = message);
       segmentedImage = result.cutoutUrl;
       segmentedOverlay = result.overlayUrl;
       segmentedAspectRatio = result.aspectRatio;
@@ -369,17 +337,13 @@
       <div class="section-heading">
         <span class="count-label">Thing {fragments.length + 1}</span>
         <h2>What caught your attention?</h2>
-        <p>Draw a loose frame around it.</p>
+        <p>Tap the object you noticed.</p>
       </div>
       <div class="crop-wrap">
-        <div class="crop-stage" bind:this={cropStage} onpointerdown={cropPointerDown} onpointermove={cropPointerMove} onpointerup={cropPointerUp} role="application" aria-label="Draw a selection over your photo">
-          <img bind:this={imageElement} src={capturedImage} alt="Your captured view" draggable="false" />
-          <div class="selection" style={`left:${selection.x}%;top:${selection.y}%;width:${selection.w}%;height:${selection.h}%`}>
-            <span></span><span></span><span></span><span></span>
-          </div>
+        <div class="crop-stage" bind:this={cropStage} onpointerdown={chooseObject} role="button" tabindex="0" aria-label="Tap an object in your photo to separate it">
+          <img src={capturedImage} alt="Your captured view" draggable="false" />
         </div>
       </div>
-      <button class="primary compact" onclick={useSelection}>Use this area <span>→</span></button>
     </section>
 
   {:else if step === 'segment'}
@@ -562,10 +526,6 @@
   .crop-wrap { width:min(820px,100%); flex:1; min-height:300px; display:grid; place-items:center; margin-bottom:28px; }
   .crop-stage { position:relative; display:inline-block; max-width:100%; max-height:56svh; cursor:crosshair; touch-action:none; user-select:none; overflow:hidden; box-shadow:0 18px 55px rgba(36,40,34,.12); }
   .crop-stage img { display:block; max-width:100%; max-height:56svh; pointer-events:none; }
-  .crop-stage::after { content:""; position:absolute; inset:0; pointer-events:none; background:rgba(12,16,13,.2); }
-  .selection { position:absolute; z-index:2; border:1.5px solid white; box-shadow:0 0 0 200vmax rgba(12,16,13,.44); pointer-events:none; }
-  .selection span { position:absolute; width:10px; height:10px; border:1px solid white; background:#f3f0e9; border-radius:50%; }
-  .selection span:nth-child(1){left:-5px;top:-5px}.selection span:nth-child(2){right:-5px;top:-5px}.selection span:nth-child(3){right:-5px;bottom:-5px}.selection span:nth-child(4){left:-5px;bottom:-5px}
 
   .segment-screen { height:100svh; min-height:620px; padding:92px 24px 24px; display:flex; flex-direction:column; align-items:center; overflow-y:auto; }
   .segment-screen .section-heading { margin-bottom:22px; }

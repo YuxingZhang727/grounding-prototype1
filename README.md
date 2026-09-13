@@ -5,8 +5,8 @@ A mobile-first visual grounding exercise that helps people notice things around 
 ## Current flow
 
 1. Take a photo or choose one from the device.
-2. Draw a loose frame around an object.
-3. Separate the object locally with a lightweight Segment Anything model.
+2. Tap the object that caught your attention.
+3. Separate the tapped object locally with a point-prompted Segment Anything model.
 4. Transform the cutout into a rubber-stamp collage piece with an AI image-editing model.
 5. Keep collecting or tap **Done** whenever the collage feels ready.
 6. Arrange the collected cutouts into a collage.

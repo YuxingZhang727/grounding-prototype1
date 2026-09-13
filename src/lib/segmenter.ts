@@ -1,6 +1,6 @@
 import { AutoProcessor, RawImage, SamModel } from '@huggingface/transformers';
 
-export type SelectionBox = { x: number; y: number; w: number; h: number };
+export type SelectionPoint = { x: number; y: number };
 
 export type SegmentResult = {
   cutoutUrl: string;
@@ -65,9 +65,9 @@ function canvasToUrl(canvas: HTMLCanvasElement): string {
   return canvas.toDataURL('image/png');
 }
 
-export async function segmentSelection(
+export async function segmentAtPoint(
   imageUrl: string,
-  selection: SelectionBox,
+  point: SelectionPoint,
   onProgress: (message: string) => void
 ): Promise<SegmentResult> {
   const [{ model, processor }, rawImage, sourceImage] = await Promise.all([
@@ -78,18 +78,13 @@ export async function segmentSelection(
 
   const width = rawImage.width;
   const height = rawImage.height;
-  const x1 = Math.max(0, Math.round((selection.x / 100) * width));
-  const y1 = Math.max(0, Math.round((selection.y / 100) * height));
-  const x2 = Math.min(width, Math.round(((selection.x + selection.w) / 100) * width));
-  const y2 = Math.min(height, Math.round(((selection.y + selection.h) / 100) * height));
-  const centerX = (x1 + x2) / 2;
-  const centerY = (y1 + y2) / 2;
+  const pointX = Math.max(0, Math.min(width - 1, Math.round((point.x / 100) * width)));
+  const pointY = Math.max(0, Math.min(height - 1, Math.round((point.y / 100) * height)));
 
   onProgress('Looking closely at the object…');
   const processed = await processor(rawImage, {
-    input_points: [[[centerX, centerY]]],
-    input_labels: [[1]],
-    input_boxes: [[[x1, y1, x2, y2]]]
+    input_points: [[[pointX, pointY]]],
+    input_labels: [[1]]
   });
   const embeddings = await model.get_image_embeddings(processed);
 
@@ -97,8 +92,7 @@ export async function segmentSelection(
   const output = await model({
     ...embeddings,
     input_points: processed.input_points,
-    input_labels: processed.input_labels,
-    input_boxes: processed.input_boxes
+    input_labels: processed.input_labels
   });
   const masks = await processor.post_process_masks(
     output.pred_masks,
@@ -151,7 +145,7 @@ export async function segmentSelection(
     }
   }
 
-  if (minX > maxX || minY > maxY) throw new Error('No object was found inside that frame.');
+  if (minX > maxX || minY > maxY) throw new Error('No object was found at that point.');
   fullContext.putImageData(pixels, 0, 0);
 
   const padding = Math.max(6, Math.round(Math.max(maxX - minX, maxY - minY) * 0.035));
