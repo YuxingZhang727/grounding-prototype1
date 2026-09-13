@@ -15,41 +15,42 @@ Add a continuous, clean, warm-white die-cut border around the entire outer silho
 Output only this single sticker, centered and fully visible on a transparent background with generous empty padding. No scene, no poster, no split layout, no frame, no typography, no logo, no extra objects, and no multi-image collage. Do not crop any part of the sticker.
 `.trim();
 
-function isImageDataUrl(input: string) {
-  return /^data:image\/(?:png|jpeg|jpg|webp);base64,/.test(input);
+function parseBase64DataUrl(input: string) {
+  const match = input.match(/^data:(image\/(?:png|jpeg|jpg|webp));base64,(.+)$/);
+  if (!match) return null;
+  return { mimeType: match[1], data: match[2] };
 }
 
-async function generateByOpenRouter(imageData: string) {
-  if (!isImageDataUrl(imageData)) return { ok: false, status: 400, message: 'Invalid image format' };
+async function generateByAiPro(imageData: string) {
+  const parsed = parseBase64DataUrl(imageData);
+  if (!parsed) return { ok: false, status: 400, message: 'Invalid image format' };
 
-  const key = env.OPENROUTER_API_KEY;
-  if (!key) return { ok: false, status: 503, message: 'Server missing OPENROUTER_API_KEY.' };
+  const key = env.AIPRO_API_KEY;
+  if (!key) return { ok: false, status: 503, message: 'Server missing AIPRO_API_KEY.' };
 
-  const response = await fetch('https://openrouter.ai/api/v1/images', {
+  const body = new FormData();
+  body.append('model', env.AIPRO_IMAGE_MODEL || 'gpt-image-1');
+  body.append('prompt', COLLAGE_PROMPT);
+  body.append('size', '1024x1024');
+  body.append('quality', 'high');
+  body.append('background', 'transparent');
+  body.append('output_format', 'png');
+  body.append('n', '1');
+  body.append(
+    'image',
+    new Blob([Buffer.from(parsed.data, 'base64')], { type: parsed.mimeType }),
+    'object.png'
+  );
+
+  const response = await fetch('https://proaiapi.vip/v1/images/edits', {
     method: 'POST',
-    headers: {
-      Authorization: `Bearer ${key}`,
-      'Content-Type': 'application/json',
-      'HTTP-Referer': 'https://github.com/YuxingZhang727/grounding-prototype1',
-      'X-Title': 'Grounding Prototype 1'
-    },
-    body: JSON.stringify({
-      model: 'microsoft/mai-image-2.6',
-      prompt: COLLAGE_PROMPT,
-      input_references: [
-        {
-          type: 'image_url',
-          image_url: { url: imageData }
-        }
-      ],
-      aspect_ratio: '1:1',
-      n: 1
-    })
+    headers: { Authorization: `Bearer ${key}` },
+    body
   });
 
   if (!response.ok) {
     const message = await response.text();
-    return { ok: false, status: response.status, message: message || 'OpenRouter image API failed.' };
+    return { ok: false, status: response.status, message: message || 'AI PRO image API failed.' };
   }
 
   const result = await response.json();
@@ -58,9 +59,7 @@ async function generateByOpenRouter(imageData: string) {
     return { ok: false, status: 502, message: 'OpenAI response did not include an image.' };
   }
 
-  const image = first.b64_json
-    ? `data:${first.media_type || 'image/png'};base64,${first.b64_json}`
-    : first.url;
+  const image = first.b64_json ? `data:image/png;base64,${first.b64_json}` : first.url;
   return { ok: true, image, status: 200 };
 }
 
@@ -76,10 +75,10 @@ export async function POST({ request }: { request: Request }) {
     return json({ success: false, error: 'Missing image data.' }, { status: 400 });
   }
 
-  const result = await generateByOpenRouter(payload.image);
+  const result = await generateByAiPro(payload.image);
   if (!result.ok || !result.image) {
     return json({ success: false, error: result.message || 'Transformation failed.' }, { status: result.status || 500 });
   }
 
-  return json({ success: true, image: result.image, source: 'openrouter-mai-image-2.6' });
+  return json({ success: true, image: result.image, source: 'aipro-image-edit' });
 }
