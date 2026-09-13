@@ -25,7 +25,7 @@ Add an AI PRO API key to `.env` before starting the server:
 
 ```sh
 AIPRO_API_KEY=your_aipro_api_key
-AIPRO_IMAGE_MODEL=gpt-image-1
+AIPRO_IMAGE_MODEL=gpt-image-2
 ```
 
 Open the local URL shown by Vite. Camera access requires `localhost` during development or HTTPS when deployed.

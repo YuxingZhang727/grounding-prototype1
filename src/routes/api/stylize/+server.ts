@@ -29,7 +29,7 @@ async function generateByAiPro(imageData: string) {
   if (!key) return { ok: false, status: 503, message: 'Server missing AIPRO_API_KEY.' };
 
   const body = new FormData();
-  body.append('model', env.AIPRO_IMAGE_MODEL || 'gpt-image-1');
+  body.append('model', env.AIPRO_IMAGE_MODEL || 'gpt-image-2');
   body.append('prompt', COLLAGE_PROMPT);
   body.append('size', '1024x1024');
   body.append('quality', 'high');
