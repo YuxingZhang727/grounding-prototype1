@@ -331,6 +331,64 @@
     (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
   }
 
+  function hitsVisiblePixel(event: PointerEvent, index: number) {
+    const fragment = fragments[index];
+    const image = collageStage.querySelector<HTMLImageElement>(`img[data-fragment="${index}"]`);
+    if (!fragment || !image?.complete || !image.naturalWidth) return false;
+
+    const stage = collageStage.getBoundingClientRect();
+    const itemWidth = (fragment.size / 100) * stage.width;
+    const itemHeight = itemWidth / fragment.aspectRatio;
+    const centerX = stage.left + (fragment.x / 100) * stage.width + itemWidth / 2;
+    const centerY = stage.top + (fragment.y / 100) * stage.height + itemHeight / 2;
+    const angle = (-fragment.rotation * Math.PI) / 180;
+    const dx = event.clientX - centerX;
+    const dy = event.clientY - centerY;
+    const localX = Math.cos(angle) * dx - Math.sin(angle) * dy + itemWidth / 2;
+    const localY = Math.sin(angle) * dx + Math.cos(angle) * dy + itemHeight / 2;
+    if (localX < 0 || localY < 0 || localX >= itemWidth || localY >= itemHeight) return false;
+
+    const scale = Math.min(itemWidth / image.naturalWidth, itemHeight / image.naturalHeight);
+    const renderedWidth = image.naturalWidth * scale;
+    const renderedHeight = image.naturalHeight * scale;
+    const imageX = localX - (itemWidth - renderedWidth) / 2;
+    const imageY = localY - (itemHeight - renderedHeight) / 2;
+    if (imageX < 0 || imageY < 0 || imageX >= renderedWidth || imageY >= renderedHeight) return false;
+
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = 1;
+      canvas.height = 1;
+      const context = canvas.getContext('2d', { willReadFrequently: true });
+      if (!context) return true;
+      context.drawImage(image, imageX / scale, imageY / scale, 1, 1, 0, 0, 1, 1);
+      return context.getImageData(0, 0, 1, 1).data[3] > 24;
+    } catch {
+      return true;
+    }
+  }
+
+  function collagePointerDown(event: PointerEvent) {
+    if (step !== 'arrange' || (event.target as HTMLElement).closest('button')) return;
+    for (let index = fragments.length - 1; index >= 0; index -= 1) {
+      if (hitsVisiblePixel(event, index)) {
+        fragmentPointerDown(event, index, 'drag');
+        return;
+      }
+    }
+    activeFragment = -1;
+  }
+
+  function moveLayer(direction: -1 | 1) {
+    if (activeFragment < 0) return;
+    const target = activeFragment + direction;
+    if (target < 0 || target >= fragments.length) return;
+    const reordered = [...fragments];
+    [reordered[activeFragment], reordered[target]] = [reordered[target], reordered[activeFragment]];
+    fragments = reordered;
+    activeFragment = target;
+  }
+
   function fragmentPointerMove(event: PointerEvent) {
     if (!gesture) return;
     const { index, mode, original, stage } = gesture;
@@ -567,21 +625,27 @@
         {/if}
       </div>
       <div class="collage-shell">
-        <div class="collage" class:editing={step === 'arrange'} bind:this={collageStage}>
+        <div
+          class="collage"
+          class:editing={step === 'arrange'}
+          bind:this={collageStage}
+          onpointerdown={collagePointerDown}
+          onpointermove={fragmentPointerMove}
+          onpointerup={fragmentPointerUp}
+          role="application"
+          aria-label="Arrange collage pieces"
+        >
           {#each fragments as fragment, index}
             <div
               class="collage-item"
               class:active={activeFragment === index && step === 'arrange'}
-              style={`left:${fragment.x}%;top:${fragment.y}%;width:${fragment.size}%;aspect-ratio:${fragment.aspectRatio};transform:rotate(${fragment.rotation}deg);z-index:${activeFragment === index ? 10 : index + 1}`}
-              onpointerdown={(event) => step === 'arrange' && fragmentPointerDown(event, index, 'drag')}
-              onpointermove={fragmentPointerMove}
-              onpointerup={fragmentPointerUp}
+              style={`left:${fragment.x}%;top:${fragment.y}%;width:${fragment.size}%;aspect-ratio:${fragment.aspectRatio};transform:rotate(${fragment.rotation}deg);z-index:${index + 1}`}
               role="button"
               tabindex={step === 'arrange' ? 0 : -1}
               aria-label={`Fragment ${index + 1}`}
               onkeydown={(event) => { if (event.key === 'Enter' || event.key === ' ') activeFragment = index; }}
             >
-              <img src={fragment.image} alt="" draggable="false" />
+              <img src={fragment.image} alt="" draggable="false" data-fragment={index} />
               {#if step === 'arrange' && activeFragment === index}
                 <button class="rotate-handle" aria-label="Rotate fragment" onpointerdown={(event) => fragmentPointerDown(event, index, 'rotate')}>↻</button>
                 <button class="resize-handle" aria-label="Resize fragment" onpointerdown={(event) => fragmentPointerDown(event, index, 'resize')}></button>
@@ -592,7 +656,15 @@
         </div>
       </div>
       {#if step === 'arrange'}
-        <button class="primary compact" onclick={() => { activeFragment = -1; step = 'finish'; }}>Done <span>✓</span></button>
+        <div class="arrange-actions">
+          {#if activeFragment >= 0}
+            <div class="layer-controls" aria-label="Layer order controls">
+              <button class="secondary layer-button" onclick={() => moveLayer(-1)} disabled={activeFragment === 0}>Send backward</button>
+              <button class="secondary layer-button" onclick={() => moveLayer(1)} disabled={activeFragment === fragments.length - 1}>Bring forward</button>
+            </div>
+          {/if}
+          <button class="primary compact" onclick={() => { activeFragment = -1; step = 'finish'; }}>Done <span>✓</span></button>
+        </div>
       {:else}
         <button class="secondary" onclick={restart}>Start again</button>
       {/if}
@@ -700,12 +772,16 @@
   .collage { width:min(100%,680px); aspect-ratio:1; background:#faf9f5; box-shadow:0 22px 70px rgba(34,39,34,.13); position:relative; overflow:hidden; touch-action:none; }
   .collage-item { position:absolute; cursor:grab; touch-action:none; transition:filter .15s; display:grid; place-items:center; }
   .collage-item > img { width:100%; height:100%; object-fit:contain; pointer-events:none; user-select:none; filter:drop-shadow(0 8px 7px rgba(25,30,25,.14)); }
-  .collage-item.active { outline:1px dashed #202720; outline-offset:7px; filter:saturate(1.08); }
-  .rotate-handle,.resize-handle { position:absolute; z-index:20; width:24px; height:24px; background:#1b211c; color:#fff; border:2px solid #faf9f5; border-radius:50%; display:grid; place-items:center; cursor:crosshair; }
-  .rotate-handle { left:50%; top:-22px; transform:translateX(-50%) rotate(calc(var(--rotation, 0deg) * -1)); font-size:12px; }
-  .resize-handle { right:-14px; bottom:-14px; cursor:nwse-resize; }
+  .collage-item.active { outline:1px dashed #202720; outline-offset:3px; filter:saturate(1.08); }
+  .rotate-handle,.resize-handle { position:absolute; z-index:20; width:19px; height:19px; padding:0; background:#1b211c; color:#fff; border:2px solid #faf9f5; border-radius:50%; display:grid; place-items:center; cursor:crosshair; }
+  .rotate-handle { left:50%; top:-15px; transform:translateX(-50%) rotate(calc(var(--rotation, 0deg) * -1)); font-size:10px; }
+  .resize-handle { right:-10px; bottom:-10px; cursor:nwse-resize; }
   .canvas-mark { position:absolute; right:15px; bottom:12px; font-size:8px; letter-spacing:.18em; color:#8d8e86; }
-  .arrange-screen > .primary,.arrange-screen > .secondary { justify-self:start; align-self:start; }
+  .arrange-screen > .secondary { justify-self:start; align-self:start; }
+  .arrange-actions { align-self:start; display:flex; flex-direction:column; align-items:flex-start; gap:14px; }
+  .layer-controls { display:flex; gap:8px; }
+  .layer-button { padding:10px 14px; font-size:11px; }
+  .layer-button:disabled { opacity:.35; cursor:not-allowed; }
   .canvas-mode header { mix-blend-mode:multiply; }
 
   @media (max-width: 760px) {
@@ -719,7 +795,8 @@
     .arrange-heading h2 { font-size:40px; margin:10px 0; }
     .arrange-heading p { margin:auto; }
     .collage-shell { width:100%; }
-    .arrange-screen > .primary,.arrange-screen > .secondary { align-self:center; }
+    .arrange-screen > .secondary { align-self:center; }
+    .arrange-actions { align-self:center; align-items:center; }
     .collage { width:min(100%,540px); }
     .focus-screen { padding:78px 14px 18px; }
     .focus-screen .section-heading { margin-bottom:14px; }
