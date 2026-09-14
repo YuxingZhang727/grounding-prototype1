@@ -3,6 +3,16 @@ import { env } from '$env/dynamic/private';
 
 type Payload = { image?: string; detectObject?: boolean };
 
+const corsHeaders = {
+  'Access-Control-Allow-Origin': env.AIPRO_ALLOWED_ORIGIN || '*',
+  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS'
+};
+
+function responseJson(body: Record<string, unknown>, status = 200) {
+  return json(body, { status, headers: corsHeaders });
+}
+
 const COLLAGE_PROMPT = `
 Transform the primary object in the uploaded image into one standalone rubber-stamp collage sticker.
 
@@ -76,17 +86,21 @@ export async function POST({ request }: { request: Request }) {
   try {
     payload = (await request.json()) as Payload;
   } catch {
-    return json({ success: false, error: 'Invalid JSON payload.' }, { status: 400 });
+    return responseJson({ success: false, error: 'Invalid JSON payload.' }, 400);
   }
 
   if (!payload.image) {
-    return json({ success: false, error: 'Missing image data.' }, { status: 400 });
+    return responseJson({ success: false, error: 'Missing image data.' }, 400);
   }
 
   const result = await generateByAiPro(payload.image, Boolean(payload.detectObject));
   if (!result.ok || !result.image) {
-    return json({ success: false, error: result.message || 'Transformation failed.' }, { status: result.status || 500 });
+    return responseJson({ success: false, error: result.message || 'Transformation failed.' }, result.status || 500);
   }
 
-  return json({ success: true, image: result.image, source: 'aipro-image-edit' });
+  return responseJson({ success: true, image: result.image, source: 'aipro-image-edit' });
+}
+
+export function OPTIONS() {
+  return new Response(null, { status: 204, headers: corsHeaders });
 }

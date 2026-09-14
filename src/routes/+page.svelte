@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Capacitor } from '@capacitor/core';
   import { onDestroy, onMount, tick } from 'svelte';
 
   type Step = 'welcome' | 'camera' | 'crop' | 'segment' | 'fragment' | 'arrange' | 'finish';
@@ -68,6 +69,11 @@
     cameraMessage = '';
     await tick();
     cameraReady = false;
+    if (Capacitor.isNativePlatform()) {
+      cameraReady = true;
+      cameraMessage = 'Tap the shutter to open your camera.';
+      return;
+    }
     try {
       stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: { ideal: 'environment' } },
@@ -90,7 +96,31 @@
     stream = null;
   }
 
-  function takePhoto() {
+  async function takePhoto() {
+    if (Capacitor.isNativePlatform()) {
+      try {
+        cameraMessage = 'Opening camera…';
+        const { Camera, CameraResultType, CameraSource } = await import('@capacitor/camera');
+        const photo = await Camera.getPhoto({
+          quality: 90,
+          allowEditing: false,
+          correctOrientation: true,
+          resultType: CameraResultType.DataUrl,
+          source: CameraSource.Camera
+        });
+        if (!photo.dataUrl) throw new Error('The camera did not return a photo.');
+        capturedImage = photo.dataUrl;
+        clearSegmentation();
+        resetSelection();
+        stopCamera();
+        step = 'crop';
+      } catch (error) {
+        cameraMessage = error instanceof Error && !error.message.toLowerCase().includes('cancel')
+          ? error.message
+          : 'Tap the shutter when you are ready.';
+      }
+      return;
+    }
     if (!video?.videoWidth || !cameraReady) return;
     const canvas = document.createElement('canvas');
     canvas.width = video.videoWidth;
@@ -317,7 +347,11 @@
   }
 
   async function stylizeWithAI(sourceUrl: string, detectObject = false) {
-    const response = await fetch('/api/stylize', {
+    const endpoint = import.meta.env.VITE_STYLIZE_API_URL || '/api/stylize';
+    if (Capacitor.isNativePlatform() && endpoint.startsWith('/')) {
+      throw new Error('Native app needs VITE_STYLIZE_API_URL pointing to the deployed stylize API.');
+    }
+    const response = await fetch(endpoint, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ image: sourceUrl, detectObject })
@@ -730,7 +764,7 @@
   main { --ink:#1b211c; --paper:#f3f0e9; min-height: 100svh; background: var(--paper); overflow-x:hidden; position: relative; transition: background .3s ease; }
   main::before { content:""; position:fixed; inset:0; pointer-events:none; opacity:.22; background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.15'/%3E%3C/svg%3E"); mix-blend-mode:multiply; }
   main.dark { --ink:#f3f0e9; --paper:#17201b; }
-  header { height:84px; padding:0 clamp(24px,5vw,72px); display:flex; align-items:center; justify-content:space-between; position:absolute; top:0; left:0; right:0; z-index:30; }
+  header { height:calc(84px + env(safe-area-inset-top)); padding:env(safe-area-inset-top) clamp(24px,5vw,72px) 0; display:flex; align-items:center; justify-content:space-between; position:absolute; top:0; left:0; right:0; z-index:30; }
   .wordmark { border:0; background:none; padding:0; font-family:Georgia,serif; font-size:22px; letter-spacing:.16em; cursor:pointer; }
   .wordmark span { color:#c54b34; }
   .progress { display:flex; align-items:center; gap:6px; }
@@ -833,8 +867,8 @@
   .canvas-mode header { mix-blend-mode:multiply; }
 
   @media (max-width: 760px) {
-    header { height:68px; padding:0 22px; }
-    .camera-screen { padding:80px 14px 18px; grid-template-rows:minmax(0,1fr) 60px; gap:14px; }
+    header { height:calc(68px + env(safe-area-inset-top)); padding:env(safe-area-inset-top) 22px 0; }
+    .camera-screen { padding:calc(80px + env(safe-area-inset-top)) 14px max(18px, env(safe-area-inset-bottom)); grid-template-rows:minmax(0,1fr) 60px; gap:14px; }
     .viewfinder { height:100%; min-height:0; }
     .camera-copy { top:95px; left:34px; }
     .camera-copy h2 { font-size:34px; }
@@ -846,14 +880,14 @@
     .arrange-screen > .secondary { align-self:center; }
     .arrange-actions { align-self:center; align-items:center; }
     .collage { width:min(100%,540px); }
-    .focus-screen { padding:78px 14px 18px; }
+    .focus-screen { padding:calc(78px + env(safe-area-inset-top)) 14px max(18px, env(safe-area-inset-bottom)); }
     .focus-screen .section-heading { margin-bottom:14px; }
     .focus-screen .section-heading h2 { font-size:31px; }
     .crop-wrap { gap:7px; min-height:240px; }
     .selection-card,.selection-preview { min-height:240px; }
     .selection-card-label { left:8px; top:8px; font-size:8px; }
     .selection-actions .secondary,.selection-actions .primary { min-width:0; padding-left:16px; padding-right:16px; }
-    .segment-screen { min-height:540px; padding:76px 14px 16px; }
+    .segment-screen { min-height:540px; padding:calc(76px + env(safe-area-inset-top)) 14px max(16px, env(safe-area-inset-bottom)); }
     .segment-screen .section-heading { margin-bottom:12px; }
     .segment-screen .section-heading h2 { font-size:32px; }
     .segment-preview { grid-template-columns:minmax(0,1fr) minmax(0,1fr); height:min(370px,42svh); min-height:190px; gap:7px; margin-bottom:14px; }

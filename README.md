@@ -11,7 +11,7 @@ A mobile-first visual grounding exercise that helps people notice things around 
 5. Transform the cutout into a rubber-stamp collage piece with an AI image-editing model.
 6. Arrange the collected pieces over the generated tactile background.
 
-The prototype uses SvelteKit and runs image segmentation in the browser with Transformers.js and SlimSAM. The selected cutout is sent through the server to AI PRO API for the artistic transformation.
+The prototype uses SvelteKit and Capacitor, and runs image segmentation in the browser with Transformers.js and SlimSAM. The selected cutout is sent through the server to AI PRO API for the artistic transformation. Capacitor packages the same interface for iOS and Android and uses the native camera on devices.
 
 ## TOUCH flow
 
@@ -33,6 +33,31 @@ AIPRO_IMAGE_MODEL=gpt-image-2
 ```
 
 Open the local URL shown by Vite. Camera access requires `localhost` during development or HTTPS when deployed.
+
+## iOS and Android
+
+Capacitor 8 requires Node.js 22 or newer.
+
+Keep `AIPRO_API_KEY` on the deployed server. Before building the native app, set the public URL of that server route:
+
+```sh
+VITE_STYLIZE_API_URL=https://your-domain.example/api/stylize
+```
+
+Then build and sync the web assets into both native projects:
+
+```sh
+npm run cap:sync
+```
+
+Open a platform project with:
+
+```sh
+npm run cap:ios
+npm run cap:android
+```
+
+The iOS command requires Xcode; the Android command requires Android Studio. Whenever the web code changes, run `npm run cap:sync` before building the native app again.
 
 ## Checks
 
