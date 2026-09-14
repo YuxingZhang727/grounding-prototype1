@@ -96,6 +96,22 @@
     stream = null;
   }
 
+  async function prepareCapturedPhoto(sourceUrl: string) {
+    const image = new Image();
+    image.src = sourceUrl;
+    await image.decode();
+    const maxDimension = 1600;
+    const scale = Math.min(1, maxDimension / Math.max(image.naturalWidth, image.naturalHeight, 1));
+    if (scale === 1) return sourceUrl;
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+    const context = canvas.getContext('2d');
+    if (!context) return sourceUrl;
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL('image/jpeg', 0.88);
+  }
+
   async function takePhoto() {
     if (Capacitor.isNativePlatform()) {
       try {
@@ -109,7 +125,7 @@
           source: CameraSource.Camera
         });
         if (!photo.dataUrl) throw new Error('The camera did not return a photo.');
-        capturedImage = photo.dataUrl;
+        capturedImage = await prepareCapturedPhoto(photo.dataUrl);
         clearSegmentation();
         resetSelection();
         stopCamera();
@@ -128,7 +144,7 @@
     const context = canvas.getContext('2d');
     if (!context) return;
     context.drawImage(video, 0, 0);
-    capturedImage = canvas.toDataURL('image/jpeg', 0.9);
+    capturedImage = await prepareCapturedPhoto(canvas.toDataURL('image/jpeg', 0.9));
     clearSegmentation();
     resetSelection();
     stopCamera();
@@ -139,8 +155,8 @@
     const file = (event.currentTarget as HTMLInputElement).files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = () => {
-      capturedImage = String(reader.result);
+    reader.onload = async () => {
+      capturedImage = await prepareCapturedPhoto(String(reader.result));
       clearSegmentation();
       resetSelection();
       stopCamera();

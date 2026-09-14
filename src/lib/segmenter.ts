@@ -1,8 +1,11 @@
 import { AutoProcessor, env, RawImage, SamModel } from '@huggingface/transformers';
+import { Capacitor } from '@capacitor/core';
 
 env.allowLocalModels = true;
 env.allowRemoteModels = false;
 env.localModelPath = '/models/';
+const wasmBackend = env.backends.onnx.wasm;
+if (Capacitor.isNativePlatform() && wasmBackend) wasmBackend.numThreads = 1;
 
 export type SelectionPoint = { x: number; y: number };
 export type SelectionBox = { x: number; y: number; w: number; h: number };
@@ -33,7 +36,9 @@ function loadSegmenter(onProgress: (message: string) => void): Promise<Segmenter
   if (segmenterPromise) return segmenterPromise;
 
   segmenterPromise = (async () => {
-    const hasWebGpu = 'gpu' in navigator;
+    // ONNX WebGPU can exceed the iOS WebView memory budget while compiling
+    // SlimSAM. Native shells use the smaller q8 WASM path for stability.
+    const hasWebGpu = !Capacitor.isNativePlatform() && 'gpu' in navigator;
     const backend: Segmenter['backend'] = hasWebGpu ? 'webgpu' : 'wasm';
     const options = {
       device: backend,
