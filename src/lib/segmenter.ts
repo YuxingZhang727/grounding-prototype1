@@ -1,11 +1,4 @@
-import { AutoProcessor, env, RawImage, SamModel } from '@huggingface/transformers';
-import { Capacitor } from '@capacitor/core';
-
-env.allowLocalModels = true;
-env.allowRemoteModels = false;
-env.localModelPath = '/models/';
-const wasmBackend = env.backends.onnx.wasm;
-if (Capacitor.isNativePlatform() && wasmBackend) wasmBackend.numThreads = 1;
+import { Capacitor, registerPlugin } from '@capacitor/core';
 
 export type SelectionPoint = { x: number; y: number };
 export type SelectionBox = { x: number; y: number; w: number; h: number };
@@ -27,8 +20,15 @@ type ProgressEvent = {
 type Segmenter = {
   model: any;
   processor: any;
+  RawImage: any;
   backend: 'webgpu' | 'wasm';
 };
+
+type NativeVisionSegmenter = {
+  segment(options: { image: string; points: SelectionPoint[] }): Promise<SegmentResult>;
+};
+
+const nativeVisionSegmenter = registerPlugin<NativeVisionSegmenter>('NativeVisionSegment');
 
 let segmenterPromise: Promise<Segmenter> | null = null;
 
@@ -36,6 +36,12 @@ function loadSegmenter(onProgress: (message: string) => void): Promise<Segmenter
   if (segmenterPromise) return segmenterPromise;
 
   segmenterPromise = (async () => {
+    const { AutoProcessor, env, RawImage, SamModel } = await import('@huggingface/transformers');
+    env.allowLocalModels = true;
+    env.allowRemoteModels = false;
+    env.localModelPath = '/models/';
+    const wasmBackend = env.backends.onnx.wasm;
+    if (Capacitor.isNativePlatform() && wasmBackend) wasmBackend.numThreads = 1;
     // ONNX WebGPU can exceed the iOS WebView memory budget while compiling
     // SlimSAM. Native shells use the smaller q8 WASM path for stability.
     const hasWebGpu = !Capacitor.isNativePlatform() && 'gpu' in navigator;
@@ -53,7 +59,7 @@ function loadSegmenter(onProgress: (message: string) => void): Promise<Segmenter
     onProgress(`Loading the bundled cutout model · ${backend === 'webgpu' ? 'GPU' : 'CPU'}`);
     const model = await SamModel.from_pretrained('Xenova/slimsam-77-uniform', options);
     const processor = await AutoProcessor.from_pretrained('Xenova/slimsam-77-uniform', options);
-    return { model, processor, backend };
+    return { model, processor, RawImage, backend };
   })().catch((error) => {
     segmenterPromise = null;
     throw error;
@@ -81,8 +87,14 @@ export async function segmentWithPrompts(
   selectionBox: SelectionBox | null,
   onProgress: (message: string) => void
 ): Promise<SegmentResult> {
-  const [{ model, processor }, rawImage, sourceImage] = await Promise.all([
-    loadSegmenter(onProgress),
+  if (Capacitor.getPlatform() === 'ios') {
+    if (!points.length) throw new Error('Tap an object first.');
+    onProgress('Separating the object with Apple Vision…');
+    return nativeVisionSegmenter.segment({ image: imageUrl, points });
+  }
+
+  const { model, processor, RawImage } = await loadSegmenter(onProgress);
+  const [rawImage, sourceImage] = await Promise.all([
     RawImage.fromURL(imageUrl),
     loadHtmlImage(imageUrl)
   ]);
