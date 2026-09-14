@@ -11,7 +11,7 @@ A mobile-first visual grounding exercise that helps people notice things around 
 5. Transform the cutout into a rubber-stamp collage piece with an AI image-editing model.
 6. Arrange the collected pieces over the generated tactile background.
 
-The prototype uses SvelteKit and Capacitor, and runs image segmentation in the browser with Transformers.js and SlimSAM. The selected cutout is sent through the server to AI PRO API for the artistic transformation. Capacitor packages the same interface for iOS and Android and uses the native camera on devices.
+The prototype uses SvelteKit and Capacitor, and runs image segmentation locally with Transformers.js and SlimSAM. Both the fp16 WebGPU weights and quantized WASM fallback weights are bundled with the app, so segmentation does not download a model from Hugging Face at runtime. The selected cutout is sent through the server to AI PRO API for the artistic transformation. Capacitor packages the same interface for iOS and Android and uses the native camera on devices.
 
 ## TOUCH flow
 
@@ -66,4 +66,4 @@ npm run check
 npm run build
 ```
 
-The first segmentation downloads the model files and can take longer. Later runs use the browser cache where available.
+The first segmentation can still take a moment while the device initializes WebGPU or WASM, but the model files are read from the app bundle and do not require a network download.

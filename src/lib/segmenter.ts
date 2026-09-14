@@ -1,4 +1,8 @@
-import { AutoProcessor, RawImage, SamModel } from '@huggingface/transformers';
+import { AutoProcessor, env, RawImage, SamModel } from '@huggingface/transformers';
+
+env.allowLocalModels = true;
+env.allowRemoteModels = false;
+env.localModelPath = '/models/';
 
 export type SelectionPoint = { x: number; y: number };
 export type SelectionBox = { x: number; y: number; w: number; h: number };
@@ -41,7 +45,7 @@ function loadSegmenter(onProgress: (message: string) => void): Promise<Segmenter
       }
     } as const;
 
-    onProgress(`Loading the cutout model · ${backend === 'webgpu' ? 'GPU' : 'CPU'}`);
+    onProgress(`Loading the bundled cutout model · ${backend === 'webgpu' ? 'GPU' : 'CPU'}`);
     const model = await SamModel.from_pretrained('Xenova/slimsam-77-uniform', options);
     const processor = await AutoProcessor.from_pretrained('Xenova/slimsam-77-uniform', options);
     return { model, processor, backend };
