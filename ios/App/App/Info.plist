@@ -26,6 +26,10 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>Grounding uses the camera so you can notice and collect objects around you.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Grounding lets you choose a photo to create a personal grounding collage.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Grounding can save artwork to your photo library when you ask it to.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
