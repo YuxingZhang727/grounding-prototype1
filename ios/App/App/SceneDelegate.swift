@@ -22,7 +22,7 @@ private enum NativeSegmentError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidImage: return "The selected photo could not be read."
-        case .noObservation: return "Apple Vision could not analyze this photo."
+        case .noObservation: return "Apple Vision could not find a distinct object in this photo. Try tapping nearer its center or drag a frame around it."
         case .noObject: return "No foreground object was found at that point."
         case .outputFailed: return "The native cutout could not be rendered."
         }
@@ -78,7 +78,12 @@ class NativeVisionSegmentPlugin: CAPPlugin, CAPBridgedPlugin {
         let handler = VNImageRequestHandler(cgImage: cgImage, orientation: .up, options: [:])
         try handler.perform([request])
         guard let observation = request.results?.first else {
-            throw NativeSegmentError.noObservation
+            return try makeSaliencyCutout(
+                image: CIImage(cgImage: cgImage),
+                imageData: options.image,
+                points: options.points,
+                handler: handler
+            )
         }
 
         let mask = observation.instanceMask
@@ -124,6 +129,85 @@ class NativeVisionSegmentPlugin: CAPPlugin, CAPBridgedPlugin {
             "aspectRatio": Double(outputCGImage.width) / Double(max(1, outputCGImage.height)),
             "score": 0
         ]
+    }
+
+    /// Foreground-instance masks power the Photos-style subject lift, so they can
+    /// legitimately return no result for a cluttered scene. Objectness saliency
+    /// is a lighter-weight Vision fallback that still finds likely object regions.
+    @available(iOS 17.0, *)
+    private static func makeSaliencyCutout(
+        image: CIImage,
+        imageData: String,
+        points: [NativeSegmentPoint],
+        handler: VNImageRequestHandler
+    ) throws -> JSObject {
+        let request = VNGenerateObjectnessBasedSaliencyImageRequest()
+        try handler.perform([request])
+        guard let observation = request.results?.first else {
+            throw NativeSegmentError.noObservation
+        }
+
+        let tapPoints = points.map {
+            CGPoint(x: min(1, max(0, $0.x / 100)), y: min(1, max(0, 1 - $0.y / 100)))
+        }
+        let objects = observation.salientObjects ?? []
+        guard !objects.isEmpty, !tapPoints.isEmpty else {
+            throw NativeSegmentError.noObservation
+        }
+
+        var selectedRects: [CGRect] = []
+        for tap in tapPoints {
+            let containing = objects
+                .filter { $0.boundingBox.insetBy(dx: -0.035, dy: -0.035).contains(tap) }
+                .min { $0.boundingBox.width * $0.boundingBox.height < $1.boundingBox.width * $1.boundingBox.height }
+            let closest = containing ?? objects.min {
+                distance(from: tap, to: $0.boundingBox) < distance(from: tap, to: $1.boundingBox)
+            }
+            if let closest { selectedRects.append(closest.boundingBox) }
+        }
+        guard var normalizedCrop = selectedRects.first else {
+            throw NativeSegmentError.noObservation
+        }
+        for rect in selectedRects.dropFirst() { normalizedCrop = normalizedCrop.union(rect) }
+        normalizedCrop = normalizedCrop.insetBy(dx: -0.035, dy: -0.035)
+            .intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+
+        let heatmap = CIImage(cvPixelBuffer: observation.pixelBuffer)
+        let scaledMask = heatmap.transformed(by: CGAffineTransform(
+            scaleX: image.extent.width / heatmap.extent.width,
+            y: image.extent.height / heatmap.extent.height
+        ))
+        let transparent = CIImage(color: .clear).cropped(to: image.extent)
+        let masked = image.applyingFilter("CIBlendWithMask", parameters: [
+            kCIInputBackgroundImageKey: transparent,
+            kCIInputMaskImageKey: scaledMask
+        ])
+        let crop = CGRect(
+            x: normalizedCrop.minX * image.extent.width,
+            y: normalizedCrop.minY * image.extent.height,
+            width: normalizedCrop.width * image.extent.width,
+            height: normalizedCrop.height * image.extent.height
+        ).integral.intersection(image.extent)
+
+        let context = CIContext(options: [.cacheIntermediates: false])
+        guard !crop.isEmpty,
+              let outputCGImage = context.createCGImage(masked, from: crop),
+              let png = UIImage(cgImage: outputCGImage).pngData() else {
+            throw NativeSegmentError.outputFailed
+        }
+        return [
+            "cutoutUrl": "data:image/png;base64,\(png.base64EncodedString())",
+            "overlayUrl": imageData,
+            "aspectRatio": Double(outputCGImage.width) / Double(max(1, outputCGImage.height)),
+            "score": 0,
+            "method": "saliency"
+        ]
+    }
+
+    private static func distance(from point: CGPoint, to rect: CGRect) -> CGFloat {
+        let dx = max(rect.minX - point.x, point.x - rect.maxX, 0)
+        let dy = max(rect.minY - point.y, point.y - rect.maxY, 0)
+        return hypot(dx, dy)
     }
 }
 
