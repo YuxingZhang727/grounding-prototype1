@@ -2,14 +2,13 @@
   import { onMount } from 'svelte';
   import { generateTouchTexture } from '$lib/touch-texture';
 
-  type TouchStep = 'texture' | 'temperature' | 'intensity' | 'result';
+  type TouchStep = 'texture' | 'temperature' | 'result';
 
   const textureOptions = ['Soft', 'Rough', 'Smooth', 'Bumpy', 'Fuzzy', 'Sticky', 'Firm', 'Slippery'];
   let step: TouchStep = $state('texture');
   let selectedTextures: string[] = $state(['Soft']);
   let customTexture = $state('');
   let temperature = $state(35);
-  let intensity = $state(3);
   let textureUrl = $state('');
 
   onMount(() => {
@@ -39,19 +38,13 @@
     return 'neutral';
   }
 
-  function intensityWord() {
-    return ['almost invisible', 'very light', 'subtle', 'present', 'clearly tactile'][intensity - 1];
-  }
-
   $effect(() => {
     const textures = [...selectedTextures];
     const currentTemperature = temperature;
-    const currentIntensity = intensity;
     const timer = window.setTimeout(() => {
       textureUrl = generateTouchTexture({
         textures,
-        temperature: currentTemperature,
-        intensity: currentIntensity
+        temperature: currentTemperature
       });
     }, 70);
     return () => window.clearTimeout(timer);
@@ -70,8 +63,7 @@
       sessionStorage.setItem('grounding-touch-background', textureUrl);
       sessionStorage.setItem('grounding-touch-summary', JSON.stringify({
         textures: selectedTextures,
-        temperature,
-        intensity
+        temperature
       }));
     } catch (error) {
       console.warn('Could not store the touch background.', error);
@@ -96,7 +88,7 @@
       <p class="eyebrow">A tactile grounding practice</p>
 
       {#if step === 'texture'}
-        <span class="step-count">01 / 03</span>
+        <span class="step-count">01 / 02</span>
         <h1>What did it<br />feel like?</h1>
         <p class="guidance">Choose one or two words that feel closest.</p>
         <div class="texture-grid">
@@ -118,26 +110,14 @@
         <button class="primary" disabled={!selectedTextures.length} onclick={() => step = 'temperature'}>Continue <span>→</span></button>
 
       {:else if step === 'temperature'}
-        <span class="step-count">02 / 03</span>
+        <span class="step-count">02 / 02</span>
         <h1>Was it warm<br />or cold?</h1>
         <p class="guidance">Let the texture change, rather than the color.</p>
         <div class="slider-wrap">
           <input type="range" min="-100" max="100" step="1" bind:value={temperature} aria-label="Temperature from cold to warm" />
           <div class="slider-labels"><span>Cold</span><span>Neutral</span><span>Warm</span></div>
         </div>
-        <div class="actions"><button class="secondary" onclick={() => step = 'texture'}>Back</button><button class="primary" onclick={() => step = 'intensity'}>Continue <span>→</span></button></div>
-
-      {:else if step === 'intensity'}
-        <span class="step-count">03 / 03</span>
-        <h1>How strong was<br />the sensation?</h1>
-        <p class="guidance">Choose how present it felt.</p>
-        <div class="intensity-scale">
-          {#each [1, 2, 3, 4, 5] as level}
-            <button class:active={intensity === level} aria-pressed={intensity === level} onclick={() => intensity = level}><span>{level}</span><i style={`height:${16 + level * 13}px`}></i></button>
-          {/each}
-        </div>
-        <p class="intensity-copy">{intensityWord()}</p>
-        <div class="actions"><button class="secondary" onclick={() => step = 'temperature'}>Back</button><button class="primary" onclick={() => step = 'result'}>Translate it <span>→</span></button></div>
+        <div class="actions"><button class="secondary" onclick={() => step = 'texture'}>Back</button><button class="primary" onclick={() => step = 'result'}>Translate it <span>→</span></button></div>
 
       {:else}
         <span class="step-count">Your translation</span>
@@ -145,9 +125,8 @@
         <dl class="summary">
           <div><dt>Texture</dt><dd>{selectedTextures.join(' + ')}</dd></div>
           <div><dt>Temperature</dt><dd>{temperatureWord()}</dd></div>
-          <div><dt>Intensity</dt><dd>{intensity} / 5</dd></div>
         </dl>
-        <p class="translation">{selectedTextures.join(' + ').toLowerCase()} + {temperatureWord()} + {intensityWord()}</p>
+        <p class="translation">{selectedTextures.join(' + ').toLowerCase()} + {temperatureWord()}</p>
         <div class="actions"><button class="secondary" onclick={() => step = 'texture'}>Adjust</button><button class="primary" onclick={continueToSee}>Continue to SEE <span>→</span></button></div>
         <button class="download-link" onclick={downloadTexture}>Download this background</button>
       {/if}
@@ -161,7 +140,7 @@
       {/if}
       <span class="page-rule"></span>
       <span class="page-number">01</span>
-      <p>{selectedTextures.join(' + ')} · {temperatureWord()} · {intensity}/5</p>
+      <p>{selectedTextures.join(' + ')} · {temperatureWord()}</p>
     </aside>
   </section>
 </main>
@@ -202,12 +181,6 @@
   .slider-wrap { margin:62px 0 55px; }
   .slider-wrap input { width:100%; accent-color:#1b211c; }
   .slider-labels { display:flex; justify-content:space-between; margin-top:13px; text-transform:uppercase; font-size:9px; letter-spacing:.15em; color:#777a72; }
-  .intensity-scale { height:105px; display:flex; gap:10px; align-items:flex-end; margin:44px 0 12px; }
-  .intensity-scale button { flex:1; height:100%; border:0; background:transparent; display:flex; flex-direction:column; justify-content:flex-end; align-items:center; gap:9px; cursor:pointer; }
-  .intensity-scale button span { font-family:Georgia,serif; font-size:20px; }
-  .intensity-scale button i { width:100%; display:block; background:#cfcbc0; border-radius:3px 3px 0 0; transition:.2s ease; }
-  .intensity-scale button.active i { background:#1b211c; }
-  .intensity-copy { text-align:right; color:#777a72; font-size:12px; margin:0 0 32px; }
   .summary { margin:32px 0; border-top:1px solid #c5c2b8; }
   .summary div { display:flex; justify-content:space-between; gap:20px; padding:13px 0; border-bottom:1px solid #c5c2b8; }
   .summary dt { color:#777a72; }

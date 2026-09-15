@@ -1,7 +1,6 @@
 export type TouchTextureOptions = {
   textures: string[];
   temperature: number;
-  intensity: number;
 };
 
 type TextureKind = 'soft' | 'rough' | 'smooth' | 'bumpy' | 'fuzzy' | 'sticky' | 'firm' | 'slippery';
@@ -67,7 +66,7 @@ function organicPath(
   context.closePath();
 }
 
-export function generateTouchTexture({ textures, temperature, intensity }: TouchTextureOptions) {
+export function generateTouchTexture({ textures, temperature }: TouchTextureOptions) {
   if (typeof document === 'undefined') return '';
 
   const canvas = document.createElement('canvas');
@@ -79,9 +78,11 @@ export function generateTouchTexture({ textures, temperature, intensity }: Touch
   const width = canvas.width;
   const height = canvas.height;
   const warmth = Math.max(0, Math.min(1, (temperature + 100) / 200));
-  const strength = Math.max(0.2, Math.min(1, intensity / 5));
+  // Keep the journal surface present but restrained without asking the user
+  // to quantify a subjective sensation on a separate intensity scale.
+  const strength = 0.62;
   const kinds = [...new Set(textures.map(textureKind))];
-  const random = mulberry32(hashString(`${textures.join('|')}|${Math.round(temperature)}|${intensity}`));
+  const random = mulberry32(hashString(`${textures.join('|')}|${Math.round(temperature)}`));
 
   // Paper body: broad pulp variation first, then low-resolution tooth.
   context.fillStyle = '#f0ebdf';
