@@ -367,7 +367,9 @@
     if (Capacitor.isNativePlatform() && endpoint.startsWith('/')) {
       throw new Error('Native app needs VITE_STYLIZE_API_URL pointing to the deployed stylize API.');
     }
-    const response = await fetch(endpoint, {
+    // Resolve fetch at call time so SvelteKit never treats this browser-only
+    // interaction as an eager server-side request during SSR.
+    const response = await globalThis.fetch(endpoint, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ image: sourceUrl, detectObject })
