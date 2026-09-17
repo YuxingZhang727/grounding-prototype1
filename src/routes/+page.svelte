@@ -12,7 +12,8 @@
     original:Fragment; stage:DOMRect; centerX:number; centerY:number;
   };
   type SelectionPoint = { x:number; y:number };
-  type SelectionBox = { x:number; y:number; w:number; h:number };
+  type BrushMode = 'positive' | 'negative' | 'lasso';
+  type SelectionStroke = { mode:BrushMode; points:SelectionPoint[] };
 
   let step: Step = 'welcome';
   let video: HTMLVideoElement;
@@ -34,15 +35,19 @@
   let gesture: Gesture | null = null;
   let isTransforming = false;
   let cameraReady = false;
-  let selectionPoints: SelectionPoint[] = [];
-  let selectionBox: SelectionBox | null = null;
-  let draftBox: SelectionBox | null = null;
-  let selectionStart: SelectionPoint | null = null;
+  let liveMaskCanvas: HTMLCanvasElement;
+  let brushMode: BrushMode = 'positive';
+  let selectionStrokes: SelectionStroke[] = [];
+  let currentStrokePoints: SelectionPoint[] = [];
+  let isPointerDown = false;
+  let brushCursor: SelectionPoint | null = null;
+  let strokeProgress = 0;
   let isSegmenting = false;
   let segmentationRequest = 0;
   let segmentationQueued = false;
   let directAiMode = false;
   let textureBackground = '';
+  const MIN_STROKE_LENGTH = 5;
 
   const placements = [
     { x: 12, y: 18, size: 31, rotation: -10 },
@@ -179,13 +184,16 @@
   }
 
   function resetSelection() {
-    selectionPoints = [];
-    selectionBox = null;
-    draftBox = null;
-    selectionStart = null;
+    selectionStrokes = [];
+    currentStrokePoints = [];
+    isPointerDown = false;
+    brushCursor = null;
+    strokeProgress = 0;
     isSegmenting = false;
     segmentationQueued = false;
     segmentationRequest += 1;
+    const context = liveMaskCanvas?.getContext('2d');
+    context?.clearRect(0, 0, liveMaskCanvas.width, liveMaskCanvas.height);
   }
 
   function selectionPosition(event: PointerEvent): SelectionPoint {
@@ -197,90 +205,95 @@
   }
 
   function selectionPointerDown(event: PointerEvent) {
-    selectionStart = selectionPosition(event);
-    draftBox = null;
+    if (event.button !== 0) return;
+    const point = selectionPosition(event);
+    isPointerDown = true;
+    currentStrokePoints = [point];
+    brushCursor = point;
+    strokeProgress = 0;
     cropStage.setPointerCapture(event.pointerId);
   }
 
   function selectionPointerMove(event: PointerEvent) {
-    if (!selectionStart) return;
+    if (!isPointerDown) return;
     const current = selectionPosition(event);
-    if (Math.hypot(current.x - selectionStart.x, current.y - selectionStart.y) < 1.5) return;
-    draftBox = {
-      x: Math.min(selectionStart.x, current.x),
-      y: Math.min(selectionStart.y, current.y),
-      w: Math.abs(current.x - selectionStart.x),
-      h: Math.abs(current.y - selectionStart.y)
-    };
+    brushCursor = current;
+    const last = currentStrokePoints[currentStrokePoints.length - 1];
+    if (!last || Math.hypot(current.x - last.x, current.y - last.y) > 0.3) {
+      currentStrokePoints = [...currentStrokePoints, current];
+      strokeProgress = Math.min(100, (strokeLength(currentStrokePoints) / MIN_STROKE_LENGTH) * 100);
+    }
   }
 
   function selectionPointerUp(event: PointerEvent) {
-    if (!selectionStart) return;
+    if (!isPointerDown) return;
+    isPointerDown = false;
     const current = selectionPosition(event);
-    const distance = Math.hypot(current.x - selectionStart.x, current.y - selectionStart.y);
-    if (distance < 1.5) {
-      selectionBox = null;
-      selectionPoints = [...selectionPoints, current];
-      directAiMode = false;
-      runSegmentation();
-    } else if (draftBox && draftBox.w > 1 && draftBox.h > 1) {
-      selectionPoints = [];
-      selectionBox = draftBox;
-      prepareDirectAiCrop(draftBox);
+    const last = currentStrokePoints[currentStrokePoints.length - 1];
+    if (!last || Math.hypot(current.x - last.x, current.y - last.y) > 0.3) {
+      currentStrokePoints = [...currentStrokePoints, current];
     }
-    selectionStart = null;
-    draftBox = null;
+    const length = strokeLength(currentStrokePoints);
+    brushCursor = null;
+    strokeProgress = 0;
+    if (length < MIN_STROKE_LENGTH) {
+      currentStrokePoints = [];
+      segmentError = 'Keep brushing until the ring is complete.';
+      return;
+    }
+    const completedStroke = { mode: brushMode, points: [...currentStrokePoints] };
+    selectionStrokes = [...selectionStrokes, completedStroke];
+    currentStrokePoints = [];
+    directAiMode = false;
+    segmentError = '';
+    runSegmentation();
   }
 
-  async function prepareDirectAiCrop(box: SelectionBox) {
-    segmentationRequest += 1;
-    segmentationQueued = false;
-    const image = new Image();
-    image.src = capturedImage;
-    await image.decode();
-    const x = Math.max(0, Math.round((box.x / 100) * image.naturalWidth));
-    const y = Math.max(0, Math.round((box.y / 100) * image.naturalHeight));
-    const width = Math.max(1, Math.min(image.naturalWidth - x, Math.round((box.w / 100) * image.naturalWidth)));
-    const height = Math.max(1, Math.min(image.naturalHeight - y, Math.round((box.h / 100) * image.naturalHeight)));
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
-    const context = canvas.getContext('2d');
-    if (!context) return;
-    context.drawImage(image, x, y, width, height, 0, 0, width, height);
-    segmentedImage = canvas.toDataURL('image/png');
-    segmentedOverlay = capturedImage;
-    segmentedAspectRatio = width / height;
-    segmentScore = 0;
-    segmentError = '';
-    segmentStatus = 'Frame ready for direct AI detection.';
-    transformedImage = '';
-    transformStatus = '';
-    directAiMode = true;
+  function selectionPointerCancel() {
+    isPointerDown = false;
+    currentStrokePoints = [];
+    brushCursor = null;
+    strokeProgress = 0;
+  }
+
+  function strokeLength(points: SelectionPoint[]) {
+    let length = 0;
+    for (let index = 1; index < points.length; index += 1) {
+      length += Math.hypot(points[index].x - points[index - 1].x, points[index].y - points[index - 1].y);
+    }
+    return length;
+  }
+
+  function strokePath(points: SelectionPoint[], close = false) {
+    if (!points.length) return '';
+    const path = points.map((point, index) => `${index ? 'L' : 'M'} ${point.x} ${point.y}`).join(' ');
+    return close ? `${path} Z` : path;
   }
 
   async function runSegmentation() {
-    if (!selectionPoints.length && !selectionBox) return;
+    if (!selectionStrokes.length || !liveMaskCanvas) return;
     if (isSegmenting) {
       segmentationQueued = true;
-      segmentationRequest += 1;
-      segmentedImage = '';
-      segmentedOverlay = '';
       segmentStatus = 'Updating the cutout…';
       return;
     }
     const request = ++segmentationRequest;
+    const strokes = selectionStrokes.map((stroke) => ({ ...stroke, points: [...stroke.points] }));
     isSegmenting = true;
     directAiMode = false;
     segmentError = '';
-    segmentedImage = '';
-    segmentedOverlay = '';
     transformedImage = '';
     transformStatus = '';
     segmentStatus = 'Preparing the photo…';
     try {
-      const { segmentWithPrompts } = await import('$lib/segmenter');
-      const result = await segmentWithPrompts(capturedImage, selectionPoints, selectionBox, (message) => segmentStatus = message);
+      const { segmentWithBrushStrokes } = await import('$lib/segmenter');
+      const result = await segmentWithBrushStrokes(
+        capturedImage,
+        strokes,
+        liveMaskCanvas,
+        (message) => segmentStatus = message,
+        () => request === segmentationRequest
+      );
       if (request !== segmentationRequest) return;
       segmentedImage = result.cutoutUrl;
       segmentedOverlay = result.overlayUrl;
@@ -322,6 +335,15 @@
     clearSegmentation();
     resetSelection();
     step = 'crop';
+  }
+
+  /** Returns to the camera with the current photo discarded. */
+  function retakePhoto() {
+    capturedImage = '';
+    clearSegmentation();
+    resetSelection();
+    step = 'camera';
+    begin();
   }
 
   function continueLooking() {
@@ -570,11 +592,20 @@
         <span class="corner bl"></span><span class="corner br"></span>
       </div>
       <div class="camera-actions">
-        <label class="text-button">Choose photo<input type="file" accept="image/*" capture="environment" onchange={choosePhoto} /></label>
+        <div class="camera-side">
+          <label class="text-button">Choose photo<input type="file" accept="image/*" capture="environment" onchange={choosePhoto} /></label>
+          {#if fragments.length}
+            <span class="camera-side-note">{fragments.length} gathered</span>
+          {/if}
+        </div>
         <button class="shutter" class:disabled={!cameraReady} onclick={takePhoto} disabled={!cameraReady} aria-label="Take photo" type="button">
           <span></span>
         </button>
-        <span class="action-spacer"></span>
+        <div class="camera-side end">
+          {#if fragments.length}
+            <button class="text-button" onclick={finishCollecting} type="button">Done gathering</button>
+          {/if}
+        </div>
       </div>
     </section>
 
@@ -583,37 +614,81 @@
       <div class="section-heading">
         <span class="count-label">Thing {fragments.length + 1}</span>
         <h2>What caught your attention?</h2>
-        <p>Tap to add details. Drag a frame for a larger object.</p>
+        <p>Brush across the object. Release to update the live mask.</p>
       </div>
+      <label class="brush-mode-control">
+        <span>Brush mode</span>
+        <select bind:value={brushMode} aria-label="Brush mode">
+          <option value="positive">Add object</option>
+          <option value="negative">Remove area</option>
+          <option value="lasso">Lasso</option>
+        </select>
+      </label>
       <div class="crop-wrap">
         <div class="selection-card">
-          <span class="selection-card-label">Your photo</span>
+          <span class="selection-card-label">Live mask</span>
           <div
             class="crop-stage"
             bind:this={cropStage}
             onpointerdown={selectionPointerDown}
             onpointermove={selectionPointerMove}
             onpointerup={selectionPointerUp}
+            onpointercancel={selectionPointerCancel}
             role="application"
-            aria-label="Tap one or more parts of an object, or drag a frame around it"
+            aria-label="Brush across the object to update its MediaPipe mask"
           >
             <img src={capturedImage} alt="Your captured view" draggable="false" />
-            {#each selectionPoints as point}
-              <span class="selection-point" style={`left:${point.x}%;top:${point.y}%`}></span>
-            {/each}
-            {#if draftBox || selectionBox}
-              {@const box = draftBox || selectionBox}
-              <span class="selection-frame" style={`left:${box?.x}%;top:${box?.y}%;width:${box?.w}%;height:${box?.h}%`}></span>
+            <canvas class="live-mask-canvas" bind:this={liveMaskCanvas} aria-hidden="true"></canvas>
+            <svg class="brush-strokes" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+              {#each selectionStrokes as stroke}
+                <path
+                  class="brush-stroke"
+                  class:negative={stroke.mode === 'negative'}
+                  class:lasso={stroke.mode === 'lasso'}
+                  d={strokePath(stroke.points, stroke.mode === 'lasso')}
+                />
+              {/each}
+              {#if currentStrokePoints.length}
+                <path
+                  class="brush-stroke active"
+                  class:negative={brushMode === 'negative'}
+                  class:lasso={brushMode === 'lasso'}
+                  d={strokePath(currentStrokePoints, false)}
+                />
+              {/if}
+            </svg>
+            {#if isPointerDown && brushCursor}
+              <span
+                class="stroke-progress"
+                class:complete={strokeProgress >= 100}
+                style={`left:${brushCursor.x}%;top:${brushCursor.y}%`}
+                aria-hidden="true"
+              >
+                <svg viewBox="0 0 48 48">
+                  <circle class="progress-track" cx="24" cy="24" r="19"></circle>
+                  <circle
+                    class="progress-value"
+                    cx="24"
+                    cy="24"
+                    r="19"
+                    pathLength="100"
+                    stroke-dasharray={`${strokeProgress} 100`}
+                  ></circle>
+                </svg>
+                <span>{strokeProgress >= 100 ? '✓' : ''}</span>
+              </span>
             {/if}
           </div>
         </div>
         <div class="selection-card preview-card">
-          <span class="selection-card-label">{directAiMode ? 'AI input crop' : 'Cutout preview'}</span>
+          <span class="selection-card-label">MediaPipe preview</span>
           <div class="selection-preview checkerboard" class:loading={isSegmenting}>
             {#if segmentedImage}
               <img src={segmentedImage} alt="Preview of the currently selected object" />
             {:else}
-              <p>{segmentError || (isSegmenting ? segmentStatus : 'Your selected object will appear here.')}</p>
+              <p aria-live="polite">
+                {segmentError || (isSegmenting ? segmentStatus : 'Your selected object will appear here.')}
+              </p>
             {/if}
             {#if isSegmenting && segmentedImage}
               <span class="preview-updating">Updating…</span>
@@ -622,10 +697,23 @@
         </div>
       </div>
       <div class="selection-actions">
-        <button class="secondary" onclick={clearSelectionPrompts} disabled={!selectionPoints.length && !selectionBox}>Reset selection</button>
-        <button class="primary compact" onclick={() => step = 'segment'} disabled={!segmentedImage || isSegmenting}>{directAiMode ? 'Use this frame' : 'Use this cutout'} <span>→</span></button>
+        <button
+          class="secondary"
+          onclick={clearSelectionPrompts}
+          disabled={!selectionStrokes.length}
+        >Reset selection</button>
+        <button class="secondary" onclick={retakePhoto} type="button">Retake photo</button>
+        <button
+          class="primary compact"
+          onclick={() => step = 'segment'}
+          disabled={!segmentedImage || isSegmenting}
+        >
+          Use this cutout <span>→</span>
+        </button>
       </div>
-      <p class="selection-help">{selectionPoints.length} {selectionPoints.length === 1 ? 'point' : 'points'} added{selectionBox ? ' · frame added' : ''}</p>
+      <p class="selection-help" aria-live="polite">
+        {segmentError || (isSegmenting ? segmentStatus : `${selectionStrokes.length} ${selectionStrokes.length === 1 ? 'stroke' : 'strokes'} added`)}
+      </p>
     </section>
 
   {:else if step === 'segment'}
@@ -811,6 +899,9 @@
   .corner { position:absolute; width:32px; height:32px; border-color:#fff; opacity:.7; }
   .corner.tl { left:20px; top:20px; border-left:1px solid; border-top:1px solid; }.corner.tr { right:20px; top:20px; border-right:1px solid; border-top:1px solid; }.corner.bl { left:20px; bottom:20px; border-left:1px solid; border-bottom:1px solid; }.corner.br { right:20px; bottom:20px; border-right:1px solid; border-bottom:1px solid; }
   .camera-actions { display:grid; grid-template-columns:1fr 1fr 1fr; align-items:center; width:min(100%,1040px); margin:auto; }
+  .camera-side { display:flex; flex-direction:column; align-items:flex-start; gap:6px; min-width:0; }
+  .camera-side.end { align-items:flex-end; }
+  .camera-side-note { color:rgba(255,255,255,.62); font-size:10px; letter-spacing:.1em; text-transform:uppercase; }
   .text-button { justify-self:start; cursor:pointer; font-size:13px; text-decoration:underline; text-underline-offset:5px; }
   .text-button input { display:none; }
   .shutter { justify-self:center; width:60px; height:60px; padding:5px; border-radius:50%; border:1px solid #fff; background:none; cursor:pointer; }
@@ -820,19 +911,35 @@
   .section-heading { text-align:center; margin-bottom:26px; }
   .section-heading h2 { font-size:clamp(32px,4vw,48px); margin:11px 0 6px; }
   .section-heading p,.arrange-heading p { color:#6d736d; margin:0; }
-  .crop-wrap { width:min(1000px,100%); flex:1; min-height:300px; display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:14px; align-items:stretch; margin-bottom:18px; overflow:hidden; }
-  .selection-card { min-width:0; min-height:280px; position:relative; display:grid; place-items:center; background:#e8e5dc; overflow:hidden; }
+  .brush-mode-control { width:min(1000px,100%); min-height:44px; margin:-10px auto 12px; display:flex; align-items:center; justify-content:flex-end; gap:10px; color:#6d736d; font-size:11px; letter-spacing:.08em; text-transform:uppercase; }
+  .brush-mode-control select { min-height:44px; padding:0 38px 0 16px; border:1px solid #a9aaa2; border-radius:100px; background:#f5f2eb; color:#1b211c; font:inherit; letter-spacing:.04em; cursor:pointer; }
+  .crop-wrap { width:min(1000px,100%); height:clamp(300px,52svh,520px); max-height:520px; flex:0 1 auto; min-height:0; display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:14px; align-items:stretch; margin-bottom:18px; overflow:hidden; }
+  .selection-card { min-width:0; min-height:0; height:100%; position:relative; display:grid; place-items:center; background:#e8e5dc; overflow:hidden; }
   .selection-card-label { position:absolute; z-index:5; left:14px; top:13px; padding:7px 10px; background:rgba(20,25,21,.72); color:#fff; border-radius:100px; font-size:10px; letter-spacing:.12em; text-transform:uppercase; backdrop-filter:blur(8px); }
-  .crop-stage { position:relative; display:inline-block; max-width:100%; max-height:56svh; cursor:crosshair; touch-action:none; user-select:none; overflow:hidden; box-shadow:0 18px 55px rgba(36,40,34,.12); }
-  .crop-stage img { display:block; max-width:100%; max-height:56svh; pointer-events:none; }
-  .selection-point { position:absolute; width:18px; height:18px; border:3px solid #fff; border-radius:50%; background:#c54b34; box-shadow:0 2px 10px rgba(20,25,21,.35); transform:translate(-50%,-50%); pointer-events:none; }
-  .selection-frame { position:absolute; border:2px solid #fff; background:rgba(197,75,52,.14); box-shadow:0 0 0 1px rgba(197,75,52,.8); pointer-events:none; }
-  .selection-preview { position:relative; width:100%; height:100%; min-height:280px; }
-  .selection-preview > img { width:100%; height:100%; object-fit:contain; }
+  .crop-stage { position:relative; display:inline-block; max-width:100%; max-height:clamp(300px,52svh,520px); cursor:crosshair; touch-action:none; user-select:none; overflow:hidden; box-shadow:0 18px 55px rgba(36,40,34,.12); }
+  .crop-stage img { display:block; max-width:100%; max-height:clamp(300px,52svh,520px); pointer-events:none; }
+  .live-mask-canvas,.brush-strokes { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
+  .live-mask-canvas { z-index:1; opacity:.62; }
+  .brush-strokes { z-index:2; overflow:visible; }
+  .brush-stroke { fill:none; stroke:#4caf50; stroke-width:.8; stroke-linecap:round; stroke-linejoin:round; vector-effect:non-scaling-stroke; }
+  .brush-stroke.negative { stroke:#e53935; }
+  .brush-stroke.lasso { stroke:#2196f3; fill:rgba(33,150,243,.15); }
+  .brush-stroke.active { stroke-width:1; }
+  .stroke-progress { --ring:#ff5722; position:absolute; z-index:3; width:52px; height:52px; transform:translate(-50%,-50%); display:grid; place-items:center; color:#fff; filter:drop-shadow(0 2px 5px rgba(20,25,21,.32)); pointer-events:none; }
+  .stroke-progress.complete { --ring:#4caf50; }
+  .stroke-progress svg { position:absolute; inset:0; width:100%; height:100%; transform:rotate(-90deg); }
+  .stroke-progress circle { fill:none; stroke-width:4; }
+  .progress-track { stroke:rgba(255,255,255,.78); }
+  .progress-value { stroke:var(--ring); stroke-linecap:round; transition:stroke .12s; }
+  .stroke-progress > span { position:relative; width:18px; height:18px; border-radius:50%; display:grid; place-items:center; background:var(--ring); font-size:12px; font-weight:700; transition:background .12s; }
+  .selection-preview { position:relative; width:100%; height:100%; min-height:0; overflow:hidden; }
+  .selection-preview.checkerboard { padding:0; }
+  .selection-preview.checkerboard > img { position:absolute; inset:7%; width:86%; height:86%; max-width:86%; max-height:86%; object-fit:contain; }
   .selection-preview > p { margin:0; max-width:240px; padding:24px; text-align:center; color:#777a72; line-height:1.45; }
   .selection-preview.loading > img { opacity:.55; }
   .preview-updating { position:absolute; left:50%; bottom:18px; transform:translateX(-50%); padding:7px 11px; border-radius:100px; background:rgba(20,25,21,.76); color:#fff; font-size:10px; letter-spacing:.1em; text-transform:uppercase; }
-  .selection-actions { display:flex; align-items:center; justify-content:center; gap:12px; }
+  .selection-actions { display:flex; flex-wrap:wrap; align-items:center; justify-content:center; gap:12px; }
+  .selection-actions button:disabled { cursor:not-allowed; opacity:.42; }
   .selection-help { min-height:1.3em; margin:10px 0 0; color:#81847c; font-size:10px; letter-spacing:.08em; }
 
   .segment-screen { height:100svh; min-height:620px; padding:92px 24px 24px; display:flex; flex-direction:column; align-items:center; overflow-y:auto; }
@@ -901,8 +1008,9 @@
     .focus-screen { padding:calc(78px + env(safe-area-inset-top)) 14px max(18px, env(safe-area-inset-bottom)); }
     .focus-screen .section-heading { margin-bottom:14px; }
     .focus-screen .section-heading h2 { font-size:31px; }
-    .crop-wrap { gap:7px; min-height:240px; }
-    .selection-card,.selection-preview { min-height:240px; }
+    .crop-wrap { height:clamp(240px,40svh,360px); min-height:0; gap:7px; }
+    .selection-card,.selection-preview { min-height:0; }
+    .crop-stage,.crop-stage img { max-height:clamp(240px,40svh,360px); }
     .selection-card-label { left:8px; top:8px; font-size:8px; }
     .selection-actions .secondary,.selection-actions .primary { min-width:0; padding-left:16px; padding-right:16px; }
     .segment-screen { min-height:540px; padding:calc(76px + env(safe-area-inset-top)) 14px max(16px, env(safe-area-inset-bottom)); }
@@ -912,6 +1020,8 @@
     .comparison-card { min-height:0; }
     .comparison-card > span { left:8px; top:8px; font-size:8px; }
     .checkerboard { padding:5%; background-size:18px 18px; background-position:0 0,0 9px,9px -9px,-9px 0; }
+    .selection-preview.checkerboard { padding:0; }
+    .selection-preview.checkerboard > img { inset:5%; width:90%; height:90%; max-width:90%; max-height:90%; }
     .segment-actions .secondary,.segment-actions .primary { min-width:0; padding-left:18px; padding-right:18px; }
     .fragment-actions { flex-direction:column-reverse; width:min(300px,100%); }
     .fragment-actions button { width:100%; }

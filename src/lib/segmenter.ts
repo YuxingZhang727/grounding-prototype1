@@ -1,7 +1,8 @@
-import { Capacitor, registerPlugin } from '@capacitor/core';
-
 export type SelectionPoint = { x: number; y: number };
-export type SelectionBox = { x: number; y: number; w: number; h: number };
+export type SelectionStroke = {
+  mode: 'positive' | 'negative' | 'lasso';
+  points: SelectionPoint[];
+};
 
 export type SegmentResult = {
   cutoutUrl: string;
@@ -11,61 +12,91 @@ export type SegmentResult = {
   score: number;
 };
 
-type ProgressEvent = {
-  status?: string;
-  progress?: number;
-  file?: string;
+type MediaPipeWorkerRuntime = {
+  worker: Worker;
+  ready: Promise<void>;
+  imageUrl?: string;
+  imageSetup?: Promise<void>;
+  requestId: number;
+  pending: Map<number, {
+    resolve: (value: ImageBitmap | null) => void;
+    reject: (reason?: unknown) => void;
+  }>;
 };
 
-type Segmenter = {
-  model: any;
-  processor: any;
-  RawImage: any;
-  backend: 'webgpu' | 'wasm';
-};
+let mediaPipeWorkerRuntime: MediaPipeWorkerRuntime | null = null;
 
-type NativeVisionSegmenter = {
-  segment(options: { image: string; points: SelectionPoint[] }): Promise<SegmentResult>;
-};
+function getMediaPipeWorker(): MediaPipeWorkerRuntime {
+  if (mediaPipeWorkerRuntime) return mediaPipeWorkerRuntime;
 
-const nativeVisionSegmenter = registerPlugin<NativeVisionSegmenter>('NativeVisionSegment');
-
-let segmenterPromise: Promise<Segmenter> | null = null;
-
-function loadSegmenter(onProgress: (message: string) => void): Promise<Segmenter> {
-  if (segmenterPromise) return segmenterPromise;
-
-  segmenterPromise = (async () => {
-    const { AutoProcessor, env, RawImage, SamModel } = await import('@huggingface/transformers');
-    env.allowLocalModels = true;
-    env.allowRemoteModels = false;
-    env.localModelPath = '/models/';
-    const wasmBackend = env.backends.onnx.wasm;
-    if (Capacitor.isNativePlatform() && wasmBackend) wasmBackend.numThreads = 1;
-    // ONNX WebGPU can exceed the iOS WebView memory budget while compiling
-    // SlimSAM. Native shells use the smaller q8 WASM path for stability.
-    const hasWebGpu = !Capacitor.isNativePlatform() && 'gpu' in navigator;
-    const backend: Segmenter['backend'] = hasWebGpu ? 'webgpu' : 'wasm';
-    const options = {
-      device: backend,
-      dtype: hasWebGpu ? 'fp16' : 'q8',
-      progress_callback: (event: ProgressEvent) => {
-        if (event.status === 'progress' && typeof event.progress === 'number') {
-          onProgress(`Loading the cutout model · ${Math.round(event.progress)}%`);
-        }
-      }
-    } as const;
-
-    onProgress(`Loading the bundled cutout model · ${backend === 'webgpu' ? 'GPU' : 'CPU'}`);
-    const model = await SamModel.from_pretrained('Xenova/slimsam-77-uniform', options);
-    const processor = await AutoProcessor.from_pretrained('Xenova/slimsam-77-uniform', options);
-    return { model, processor, RawImage, backend };
-  })().catch((error) => {
-    segmenterPromise = null;
-    throw error;
+  const worker = new Worker(new URL('./interactive-segmenter.worker.ts', import.meta.url), { type: 'module' });
+  let resolveReady!: () => void;
+  let rejectReady!: (reason?: unknown) => void;
+  const ready = new Promise<void>((resolve, reject) => {
+    resolveReady = resolve;
+    rejectReady = reject;
   });
+  const runtime: MediaPipeWorkerRuntime = {
+    worker,
+    ready,
+    requestId: 0,
+    pending: new Map()
+  };
 
-  return segmenterPromise;
+  worker.onmessage = (event: MessageEvent) => {
+    const { type, reqId, maskBitmap, error } = event.data;
+    if (type === 'READY') {
+      resolveReady();
+      return;
+    }
+    if (type === 'IMAGE_SET' || type === 'CLEARED') {
+      runtime.pending.get(reqId)?.resolve(null);
+      runtime.pending.delete(reqId);
+      return;
+    }
+    if (type === 'SEGMENT_RESULT') {
+      runtime.pending.get(reqId)?.resolve(maskBitmap ?? null);
+      runtime.pending.delete(reqId);
+      return;
+    }
+    if (type === 'ERROR') {
+      const failure = new Error(error || 'MediaPipe could not segment this image.');
+      if (typeof reqId === 'number' && runtime.pending.has(reqId)) {
+        runtime.pending.get(reqId)?.reject(failure);
+        runtime.pending.delete(reqId);
+      } else {
+        rejectReady(failure);
+      }
+    }
+  };
+  worker.onerror = (event) => {
+    const failure = new Error(event.message || 'MediaPipe worker failed to start.');
+    rejectReady(failure);
+    runtime.pending.forEach(({ reject }) => reject(failure));
+    runtime.pending.clear();
+  };
+  worker.postMessage({
+    type: 'INIT',
+    wasmRoot: '/mediapipe/wasm',
+    modelAssetPath: '/models/interactive_segmenter/interactive_segmentation.task'
+  });
+  mediaPipeWorkerRuntime = runtime;
+  return runtime;
+}
+
+function requestWorker<T extends ImageBitmap | null>(
+  runtime: MediaPipeWorkerRuntime,
+  message: Record<string, unknown>,
+  transfer: Transferable[] = []
+): Promise<T> {
+  const reqId = ++runtime.requestId;
+  return new Promise<T>((resolve, reject) => {
+    runtime.pending.set(reqId, {
+      resolve: (value) => resolve(value as T),
+      reject
+    });
+    runtime.worker.postMessage({ ...message, reqId }, transfer);
+  });
 }
 
 function loadHtmlImage(src: string): Promise<HTMLImageElement> {
@@ -77,151 +108,172 @@ function loadHtmlImage(src: string): Promise<HTMLImageElement> {
   });
 }
 
-function canvasToUrl(canvas: HTMLCanvasElement): string {
-  return canvas.toDataURL('image/png');
+function waitForOverlayPaint(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => setTimeout(resolve, 0));
+  });
 }
 
-export async function segmentWithPrompts(
-  imageUrl: string,
-  points: SelectionPoint[],
-  selectionBox: SelectionBox | null,
-  onProgress: (message: string) => void
-): Promise<SegmentResult> {
-  if (Capacitor.getPlatform() === 'ios') {
-    if (!points.length) throw new Error('Tap an object first.');
-    onProgress('Separating the object with Apple Vision…');
-    return nativeVisionSegmenter.segment({ image: imageUrl, points });
-  }
+const PREVIEW_MAX = 640;
 
-  const { model, processor, RawImage } = await loadSegmenter(onProgress);
-  const [rawImage, sourceImage] = await Promise.all([
-    RawImage.fromURL(imageUrl),
-    loadHtmlImage(imageUrl)
-  ]);
+function maskBounds(maskCanvas: HTMLCanvasElement): { x: number; y: number; w: number; h: number } | null {
+  const scanScale = Math.min(1, 512 / Math.max(maskCanvas.width, maskCanvas.height));
+  const scanWidth = Math.max(1, Math.round(maskCanvas.width * scanScale));
+  const scanHeight = Math.max(1, Math.round(maskCanvas.height * scanScale));
+  const scanCanvas = document.createElement('canvas');
+  scanCanvas.width = scanWidth;
+  scanCanvas.height = scanHeight;
+  const context = scanCanvas.getContext('2d', { willReadFrequently: true });
+  if (!context) return null;
+  context.drawImage(maskCanvas, 0, 0, scanWidth, scanHeight);
+  const pixels = context.getImageData(0, 0, scanWidth, scanHeight).data;
 
-  const width = rawImage.width;
-  const height = rawImage.height;
-  if (!points.length && !selectionBox) throw new Error('Tap an object or draw a frame first.');
-
-  const inputPoints = points.map((point) => [
-    Math.max(0, Math.min(width - 1, Math.round((point.x / 100) * width))),
-    Math.max(0, Math.min(height - 1, Math.round((point.y / 100) * height)))
-  ]);
-  const processorOptions: Record<string, unknown> = {};
-  if (selectionBox) {
-    const x1 = Math.max(0, Math.round((selectionBox.x / 100) * width));
-    const y1 = Math.max(0, Math.round((selectionBox.y / 100) * height));
-    const x2 = Math.min(width, Math.round(((selectionBox.x + selectionBox.w) / 100) * width));
-    const y2 = Math.min(height, Math.round(((selectionBox.y + selectionBox.h) / 100) * height));
-    processorOptions.input_boxes = [[[x1, y1, x2, y2]]];
-    if (!inputPoints.length) inputPoints.push([(x1 + x2) / 2, (y1 + y2) / 2]);
-  }
-  if (inputPoints.length) {
-    processorOptions.input_points = [inputPoints];
-    processorOptions.input_labels = [inputPoints.map(() => 1)];
-  }
-
-  onProgress('Looking closely at the object…');
-  const processed = await processor(rawImage, processorOptions);
-  const embeddings = await model.get_image_embeddings(processed);
-
-  onProgress('Tracing its outline…');
-  const modelInputs: Record<string, unknown> = { ...embeddings };
-  if (processed.input_points) modelInputs.input_points = processed.input_points;
-  if (processed.input_labels) modelInputs.input_labels = processed.input_labels;
-  if (processed.input_boxes) modelInputs.input_boxes = processed.input_boxes;
-  const output = await model(modelInputs);
-  const masks = await processor.post_process_masks(
-    output.pred_masks,
-    processed.original_sizes,
-    processed.reshaped_input_sizes
-  );
-
-  const scores = Array.from(output.iou_scores.data as Float32Array);
-  let bestMask = 0;
-  for (let index = 1; index < scores.length; index += 1) {
-    if (scores[index] > scores[bestMask]) bestMask = index;
-  }
-
-  const maskImage = RawImage.fromTensor(masks[0][0]);
-  const maskChannels = scores.length;
-  const fullCanvas = document.createElement('canvas');
-  fullCanvas.width = width;
-  fullCanvas.height = height;
-  const fullContext = fullCanvas.getContext('2d', { willReadFrequently: true });
-  if (!fullContext) throw new Error('Canvas is unavailable in this browser.');
-  fullContext.drawImage(sourceImage, 0, 0, width, height);
-  const pixels = fullContext.getImageData(0, 0, width, height);
-
-  let minX = width;
-  let minY = height;
-  let maxX = 0;
-  let maxY = 0;
-  let red = 0;
-  let green = 0;
-  let blue = 0;
-  let colorCount = 0;
-
-  for (let pixel = 0; pixel < width * height; pixel += 1) {
-    const x = pixel % width;
-    const y = Math.floor(pixel / width);
-    const rgba = pixel * 4;
-    const inside = maskImage.data[pixel * maskChannels + bestMask] === 1;
-    pixels.data[rgba + 3] = inside ? 255 : 0;
-    if (!inside) continue;
-
+  let minX = scanWidth;
+  let minY = scanHeight;
+  let maxX = -1;
+  let maxY = -1;
+  for (let index = 0; index < scanWidth * scanHeight; index += 1) {
+    if (pixels[index * 4 + 3] < 128) continue;
+    const x = index % scanWidth;
+    const y = Math.floor(index / scanWidth);
     minX = Math.min(minX, x);
     minY = Math.min(minY, y);
     maxX = Math.max(maxX, x);
     maxY = Math.max(maxY, y);
-    if (pixel % 13 === 0) {
-      red += pixels.data[rgba];
-      green += pixels.data[rgba + 1];
-      blue += pixels.data[rgba + 2];
-      colorCount += 1;
-    }
+  }
+  if (maxX < 0 || maxY < 0) return null;
+  return {
+    x: minX / scanWidth,
+    y: minY / scanHeight,
+    w: (maxX + 1 - minX) / scanWidth,
+    h: (maxY + 1 - minY) / scanHeight
+  };
+}
+
+function cropRect(
+  bounds: { x: number; y: number; w: number; h: number },
+  width: number,
+  height: number
+): { x: number; y: number; w: number; h: number } {
+  const x = bounds.x * width;
+  const y = bounds.y * height;
+  const w = Math.max(1, bounds.w * width);
+  const h = Math.max(1, bounds.h * height);
+  const padding = Math.max(6, Math.round(Math.max(w, h) * 0.035));
+  const left = Math.max(0, Math.floor(x - padding));
+  const top = Math.max(0, Math.floor(y - padding));
+  const right = Math.min(width, Math.ceil(x + w + padding));
+  const bottom = Math.min(height, Math.ceil(y + h + padding));
+  return { x: left, y: top, w: Math.max(1, right - left), h: Math.max(1, bottom - top) };
+}
+
+function buildPreview(sourceImage: HTMLImageElement, maskCanvas: HTMLCanvasElement) {
+  const sourceWidth = sourceImage.naturalWidth || sourceImage.width;
+  const sourceHeight = sourceImage.naturalHeight || sourceImage.height;
+  const bounds = maskBounds(maskCanvas);
+  if (!bounds) throw new Error('No object was found under that brush stroke.');
+
+  const crop = cropRect(bounds, sourceWidth, sourceHeight);
+  const scale = Math.min(1, PREVIEW_MAX / Math.max(crop.w, crop.h));
+  const width = Math.max(1, Math.round(crop.w * scale));
+  const height = Math.max(1, Math.round(crop.h * scale));
+  const cutout = document.createElement('canvas');
+  cutout.width = width;
+  cutout.height = height;
+  const cutoutContext = cutout.getContext('2d');
+  if (!cutoutContext) throw new Error('Canvas is unavailable in this browser.');
+  cutoutContext.drawImage(sourceImage, crop.x, crop.y, crop.w, crop.h, 0, 0, width, height);
+  cutoutContext.globalCompositeOperation = 'destination-in';
+  cutoutContext.drawImage(
+    maskCanvas,
+    (crop.x / sourceWidth) * maskCanvas.width,
+    (crop.y / sourceHeight) * maskCanvas.height,
+    (crop.w / sourceWidth) * maskCanvas.width,
+    (crop.h / sourceHeight) * maskCanvas.height,
+    0,
+    0,
+    width,
+    height
+  );
+
+  const overlayScale = Math.min(1, PREVIEW_MAX / Math.max(sourceWidth, sourceHeight));
+  const overlayWidth = Math.max(1, Math.round(sourceWidth * overlayScale));
+  const overlayHeight = Math.max(1, Math.round(sourceHeight * overlayScale));
+  const overlay = document.createElement('canvas');
+  overlay.width = overlayWidth;
+  overlay.height = overlayHeight;
+  const overlayContext = overlay.getContext('2d');
+  if (!overlayContext) throw new Error('Canvas is unavailable in this browser.');
+  overlayContext.drawImage(sourceImage, 0, 0, overlayWidth, overlayHeight);
+  overlayContext.fillStyle = 'rgba(12, 16, 13, .28)';
+  overlayContext.fillRect(0, 0, overlayWidth, overlayHeight);
+  overlayContext.drawImage(maskCanvas, 0, 0, overlayWidth, overlayHeight);
+
+  return {
+    cutoutUrl: cutout.toDataURL('image/png'),
+    overlayUrl: overlay.toDataURL('image/jpeg', 0.9),
+    aspectRatio: width / Math.max(1, height)
+  };
+}
+
+export async function segmentWithBrushStrokes(
+  imageUrl: string,
+  strokeHints: SelectionStroke[],
+  liveMaskCanvas: HTMLCanvasElement,
+  onProgress: (message: string) => void,
+  shouldApply: () => boolean = () => true
+): Promise<SegmentResult> {
+  if (!strokeHints.length) throw new Error('Brush over an object first.');
+  const runtime = getMediaPipeWorker();
+  const sourceImage = await loadHtmlImage(imageUrl);
+  onProgress('Loading MediaPipe…');
+  await runtime.ready;
+
+  if (runtime.imageUrl !== imageUrl) {
+    onProgress('Preparing the photo…');
+    const bitmap = await createImageBitmap(sourceImage);
+    runtime.imageSetup = requestWorker(runtime, { type: 'SET_IMAGE', bitmap }, [bitmap]).then(() => undefined);
+    await runtime.imageSetup;
+    runtime.imageUrl = imageUrl;
+  } else if (runtime.imageSetup) {
+    await runtime.imageSetup;
   }
 
-  if (minX > maxX || minY > maxY) throw new Error('No object was found at that point.');
-  fullContext.putImageData(pixels, 0, 0);
+  const brushModes = { positive: 1, negative: 2, lasso: 3 };
+  const strokes = strokeHints.map((stroke) => ({
+    brushMode: brushModes[stroke.mode],
+    point: stroke.points.map((point) => ({
+      x: Math.max(0, Math.min(1, point.x / 100)),
+      y: Math.max(0, Math.min(1, point.y / 100))
+    })),
+    isCompleted: true
+  }));
 
-  const padding = Math.max(6, Math.round(Math.max(maxX - minX, maxY - minY) * 0.035));
-  const cropX = Math.max(0, minX - padding);
-  const cropY = Math.max(0, minY - padding);
-  const cropWidth = Math.min(width - cropX, maxX - minX + 1 + padding * 2);
-  const cropHeight = Math.min(height - cropY, maxY - minY + 1 + padding * 2);
-  const cutoutCanvas = document.createElement('canvas');
-  cutoutCanvas.width = cropWidth;
-  cutoutCanvas.height = cropHeight;
-  const cutoutContext = cutoutCanvas.getContext('2d');
-  if (!cutoutContext) throw new Error('Canvas is unavailable in this browser.');
-  cutoutContext.drawImage(fullCanvas, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
+  onProgress('Updating the live mask…');
+  const maskBitmap = await requestWorker<ImageBitmap>(runtime, { type: 'SEGMENT', strokes });
+  if (!maskBitmap) throw new Error('MediaPipe did not return a mask.');
+  if (!shouldApply()) {
+    maskBitmap.close();
+    throw new DOMException('This mask result is no longer needed.', 'AbortError');
+  }
 
-  const overlayCanvas = document.createElement('canvas');
-  overlayCanvas.width = width;
-  overlayCanvas.height = height;
-  const overlayContext = overlayCanvas.getContext('2d');
-  if (!overlayContext) throw new Error('Canvas is unavailable in this browser.');
-  overlayContext.drawImage(sourceImage, 0, 0, width, height);
-  overlayContext.fillStyle = 'rgba(12, 16, 13, .28)';
-  overlayContext.fillRect(0, 0, width, height);
-  const tintCanvas = document.createElement('canvas');
-  tintCanvas.width = width;
-  tintCanvas.height = height;
-  const tintContext = tintCanvas.getContext('2d');
-  if (!tintContext) throw new Error('Canvas is unavailable in this browser.');
-  tintContext.drawImage(fullCanvas, 0, 0);
-  tintContext.globalCompositeOperation = 'source-in';
-  tintContext.fillStyle = 'rgba(197, 75, 52, .58)';
-  tintContext.fillRect(0, 0, width, height);
-  overlayContext.drawImage(tintCanvas, 0, 0);
+  if (liveMaskCanvas.width !== maskBitmap.width) liveMaskCanvas.width = maskBitmap.width;
+  if (liveMaskCanvas.height !== maskBitmap.height) liveMaskCanvas.height = maskBitmap.height;
+  const context = liveMaskCanvas.getContext('2d');
+  if (!context) {
+    maskBitmap.close();
+    throw new Error('Canvas is unavailable in this browser.');
+  }
+  context.clearRect(0, 0, liveMaskCanvas.width, liveMaskCanvas.height);
+  context.drawImage(maskBitmap, 0, 0);
+  maskBitmap.close();
 
-  const soften = (value: number) => Math.round((value / Math.max(1, colorCount)) * 0.86 + 245 * 0.14);
+  if (!shouldApply()) throw new DOMException('This mask result is no longer needed.', 'AbortError');
+  onProgress('Mask ready');
+  await waitForOverlayPaint();
   return {
-    cutoutUrl: canvasToUrl(cutoutCanvas),
-    overlayUrl: canvasToUrl(overlayCanvas),
-    color: `rgb(${soften(red)}, ${soften(green)}, ${soften(blue)})`,
-    aspectRatio: cropWidth / cropHeight,
-    score: scores[bestMask] ?? 0
+    ...buildPreview(sourceImage, liveMaskCanvas),
+    color: 'rgb(255, 0, 255)',
+    score: 0.75
   };
 }
