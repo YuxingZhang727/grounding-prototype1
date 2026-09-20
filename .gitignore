@@ -5,6 +5,9 @@ dist/
 .vite/
 .playwright-cli/
 output/
+.wrangler/
+.dev.vars*
+!.dev.vars.example
 
 .env
 .env.*
@@ -12,4 +15,3 @@ output/
 
 .DS_Store
 *.log
-

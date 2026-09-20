@@ -1,3 +1,5 @@
+import { Capacitor } from '@capacitor/core';
+
 export type SelectionPoint = { x: number; y: number };
 export type SelectionStroke = {
   mode: 'positive' | 'negative' | 'lasso';
@@ -25,6 +27,10 @@ type MediaPipeWorkerRuntime = {
 };
 
 let mediaPipeWorkerRuntime: MediaPipeWorkerRuntime | null = null;
+
+const BUNDLED_MODEL_PATH = '/models/interactive_segmenter/interactive_segmentation.task';
+const WEB_MODEL_PATH =
+  'https://storage.googleapis.com/mediapipe-models/interactive_segmenter_v2/magic_touch/int8/1/interactive_segmentation.task';
 
 function getMediaPipeWorker(): MediaPipeWorkerRuntime {
   if (mediaPipeWorkerRuntime) return mediaPipeWorkerRuntime;
@@ -78,7 +84,10 @@ function getMediaPipeWorker(): MediaPipeWorkerRuntime {
   worker.postMessage({
     type: 'INIT',
     wasmRoot: '/mediapipe/wasm',
-    modelAssetPath: '/models/interactive_segmenter/interactive_segmentation.task'
+    // Native shells keep the model in the app bundle for offline use. The web
+    // build uses Google's official hosted model because Cloudflare Workers has
+    // a 25 MiB per-asset limit and this model is about 29 MiB.
+    modelAssetPath: Capacitor.isNativePlatform() ? BUNDLED_MODEL_PATH : WEB_MODEL_PATH
   });
   mediaPipeWorkerRuntime = runtime;
   return runtime;

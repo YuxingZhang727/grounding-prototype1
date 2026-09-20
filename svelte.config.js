@@ -1,4 +1,4 @@
-import adapterAuto from '@sveltejs/adapter-auto';
+import adapterCloudflare from '@sveltejs/adapter-cloudflare';
 import adapterStatic from '@sveltejs/adapter-static';
 
 const capacitorBuild = process.env.CAPACITOR_BUILD === 'true';
@@ -8,7 +8,7 @@ const config = {
   kit: {
     adapter: capacitorBuild
       ? adapterStatic({ fallback: 'index.html', strict: false })
-      : adapterAuto()
+      : adapterCloudflare()
   }
 };
 
