@@ -25,6 +25,7 @@
   let video: HTMLVideoElement;
   let cropStage: HTMLDivElement;
   let collageStage: HTMLDivElement;
+  let materialsStrip: HTMLDivElement;
   let stream: MediaStream | null = null;
   let capturedImage = '';
   let segmentedImage = '';
@@ -368,6 +369,15 @@
     const width = 360;
     fragments = [...fragments, { image:tapeImage(roll.frames,width), aspectRatio:width/88, artifactId:roll.id, kind:'tape', x:14+(index%3)*8, y:58+(index%3)*7, size:62, rotation:-5+(index%3)*5 }];
     activeFragment = index;
+  }
+
+  function scrollSavedPieces(direction: -1 | 1) {
+    if (!materialsStrip) return;
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    materialsStrip.scrollBy({
+      left: direction * Math.max(190, materialsStrip.clientWidth * .72),
+      behavior: reducedMotion ? 'auto' : 'smooth'
+    });
   }
 
   async function removeSavedSticker(sticker: SavedSticker) {
@@ -1023,8 +1033,14 @@
           <button class="primary compact" onclick={() => { activeFragment = -1; step = 'finish'; }}>Review today’s page <span>✓</span></button>
           {#if savedStickers.length || soundRolls.length}
             <div class="materials">
-              <div class="materials-heading"><strong>Your saved pieces</strong><span>Tap a piece to use it again.</span></div>
-              <div class="material-strip">
+              <div class="materials-heading">
+                <div><strong>Your saved pieces</strong><span>Swipe or use the arrows to browse.</span></div>
+                <div class="material-scroll-controls" aria-label="Browse saved pieces">
+                  <button onclick={() => scrollSavedPieces(-1)} aria-label="Show previous saved pieces"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg></button>
+                  <button onclick={() => scrollSavedPieces(1)} aria-label="Show more saved pieces"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6" /></svg></button>
+                </div>
+              </div>
+              <div class="material-strip" bind:this={materialsStrip}>
                 {#each savedStickers as sticker}
                   <div class="material-item"><button class="material-add" onclick={() => addSavedSticker(sticker)} aria-label={`Add ${sticker.name} to this collage`}><img src={sticker.image} alt="" /><span>{sticker.name}</span></button><button class="material-delete" onclick={() => removeSavedSticker(sticker)} aria-label={`Delete ${sticker.name}`}>×</button></div>
                 {/each}
@@ -1171,7 +1187,7 @@
   .canvas-mark { position:absolute; right:15px; bottom:12px; font-size:8px; letter-spacing:.18em; color:#8d8e86; }
   .arrange-screen > .secondary { justify-self:start; align-self:start; }
   .arrange-actions { align-self:start; display:flex; flex-direction:column; align-items:flex-start; gap:14px; }
-  .materials { width:min(360px,100%); margin-top:8px; padding-top:18px; border-top:1px solid #c8c6bd; }.materials-heading { display:flex; flex-direction:column; gap:4px; margin-bottom:10px; }.materials-heading strong { font-size:13px; }.materials-heading span { color:#767a73; font-size:11px; }.material-strip { display:flex; gap:9px; overflow-x:auto; padding:2px 2px 10px; scrollbar-width:none; }.material-strip::-webkit-scrollbar { display:none; }.material-item { width:92px; flex:0 0 92px; position:relative; border:1px solid #d0cec5; background:#faf9f5; border-radius:10px; overflow:hidden; }.material-add { width:100%; min-height:105px; padding:8px; border:0; background:none; display:flex; flex-direction:column; gap:6px; text-align:left; cursor:pointer; }.material-add img { width:100%; height:62px; object-fit:contain; }.material-item.tape .material-add img { object-fit:cover; }.material-add span { width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:10px; }.material-delete { position:absolute; right:4px; top:4px; width:28px; height:28px; padding:0; border:0; border-radius:50%; background:#fffdf1e8; color:#943f34; box-shadow:0 2px 7px #1b211c1c; cursor:pointer; }
+  .materials { width:min(360px,100%); max-width:calc(100vw - 40px); min-width:0; overflow:hidden; margin-top:8px; padding-top:18px; border-top:1px solid #c8c6bd; }.materials-heading { display:flex; flex-direction:row; align-items:center; justify-content:space-between; gap:12px; margin-bottom:10px; }.materials-heading>div:first-child { min-width:0; display:flex; flex-direction:column; gap:4px; }.materials-heading strong { font-size:13px; }.materials-heading span { color:#767a73; font-size:11px; }.material-scroll-controls { display:flex; flex:0 0 auto; gap:8px; }.material-scroll-controls button { width:44px; height:44px; padding:0; border:1px solid #b9b7ae; border-radius:50%; background:rgba(250,249,245,.8); display:grid; place-items:center; cursor:pointer; touch-action:manipulation; }.material-scroll-controls button:active { background:#e3dfd5; }.material-scroll-controls svg { width:18px; height:18px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }.material-strip { width:100%; min-width:0; display:flex; gap:9px; overflow-x:auto; overscroll-behavior-x:contain; scroll-snap-type:x proximity; touch-action:pan-x; -webkit-overflow-scrolling:touch; padding:2px 2px 10px; scrollbar-width:none; }.material-strip::-webkit-scrollbar { display:none; }.material-item { width:92px; flex:0 0 92px; scroll-snap-align:start; position:relative; border:1px solid #d0cec5; background:#faf9f5; border-radius:10px; overflow:hidden; }.material-add { width:100%; min-height:105px; padding:8px; border:0; background:none; display:flex; flex-direction:column; gap:6px; text-align:left; cursor:pointer; }.material-add img { width:100%; height:62px; object-fit:contain; }.material-item.tape .material-add img { object-fit:cover; }.material-add span { width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:10px; }.material-delete { position:absolute; right:4px; top:4px; width:28px; height:28px; padding:0; border:0; border-radius:50%; background:#fffdf1e8; color:#943f34; box-shadow:0 2px 7px #1b211c1c; cursor:pointer; }
   .layer-controls { display:flex; flex-wrap:wrap; gap:8px; }
   .layer-button { min-height:44px; padding:10px 14px; font-size:11px; }
   .layer-button:disabled { opacity:.35; cursor:not-allowed; }
