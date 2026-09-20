@@ -38,7 +38,6 @@ class HealthTrendPlugin: CAPPlugin, CAPBridgedPlugin {
         types.insert(HKQuantityType.quantityType(forIdentifier: .heartRateVariabilitySDNN)!)
         types.insert(HKQuantityType.quantityType(forIdentifier: .restingHeartRate)!)
         types.insert(HKQuantityType.quantityType(forIdentifier: .respiratoryRate)!)
-        types.insert(HKQuantityType.quantityType(forIdentifier: .heartRate)!)
         types.insert(HKCategoryType.categoryType(forIdentifier: .mindfulSession)!)
         return types
     }
