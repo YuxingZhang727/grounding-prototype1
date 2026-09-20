@@ -55,7 +55,6 @@
   let textureBackground = '';
   let savedStickers: SavedSticker[] = [];
   let soundRolls: SoundRoll[] = [];
-  let hearingComplete = false;
   const MIN_STROKE_LENGTH = 5;
 
   const placements = [
@@ -110,7 +109,6 @@
     const url = new URL(window.location.href); url.searchParams.set('start', next);
     pushState(url.pathname + url.search, { groundingStep:next });
     if (next === 'hear') { stopCamera(); step = 'sound'; return; }
-    if (fragments.length) { stopCamera(); activeFragment = -1; step = 'arrange'; return; }
     void begin();
   }
 
@@ -407,8 +405,8 @@
     stopCamera();
     capturedImage = '';
     clearSegmentation();
-    activeFragment = 0;
-    step = 'arrange';
+    activeFragment = -1;
+    step = 'sound';
   }
 
   async function stylizeLocally(sourceUrl: string) {
@@ -555,6 +553,26 @@
     activeFragment = target;
   }
 
+  function removeFragmentFromPage(index: number) {
+    if (index < 0 || index >= fragments.length) return;
+    fragments = fragments.filter((_, fragmentIndex) => fragmentIndex !== index);
+    gesture = null;
+    activeFragment = -1;
+  }
+
+  function fragmentKeyDown(event: KeyboardEvent, index: number) {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      activeFragment = index;
+      return;
+    }
+    if ((event.key === 'Delete' || event.key === 'Backspace') && fragments[index]?.kind === 'sticker') {
+      event.preventDefault();
+      event.stopPropagation();
+      removeFragmentFromPage(index);
+    }
+  }
+
   function fragmentPointerMove(event: PointerEvent) {
     if (!gesture) return;
     const { index, mode, original, stage } = gesture;
@@ -580,7 +598,6 @@
     capturedImage = '';
     clearSegmentation();
     activeFragment = -1;
-    hearingComplete = false;
     step = 'welcome';
   }
 
@@ -595,8 +612,7 @@
       const current = new URLSearchParams(window.location.search).get('start');
       if (current === 'sound') { stopCamera(); step = 'sound'; }
       if (current === 'see') {
-        if (fragments.length) { stopCamera(); activeFragment = -1; step = 'arrange'; }
-        else void begin();
+        void begin();
       }
     };
     window.addEventListener('popstate', restoreStage);
@@ -612,11 +628,11 @@
 </svelte:head>
 
 {#if step !== 'welcome'}
-  {#key step}<GroundingSteps active={step === 'sound' || step === 'finish' ? 'hear' : 'see'} onselect={selectGroundingStage} />{/key}
+  {#key step}<GroundingSteps active={step === 'sound' || step === 'arrange' || step === 'finish' ? 'hear' : 'see'} onselect={selectGroundingStage} />{/key}
 {/if}
 <main class:dark={step === 'camera'} class:canvas-mode={step === 'arrange' || step === 'finish'} class:in-flow={step !== 'welcome'}>
   <header>
-    <button class="wordmark" onclick={restart} aria-label="Return to start">{step === 'welcome' ? 'GROUNDING' : step === 'sound' ? 'HEAR' : 'SEE'}<span>·</span></button>
+    <button class="wordmark" onclick={restart} aria-label="Return to start">{step === 'welcome' || step === 'arrange' || step === 'finish' ? 'GROUNDING' : step === 'sound' ? 'HEAR' : 'SEE'}<span>·</span></button>
     {#if step !== 'welcome' && step !== 'finish'}
       <div class="progress" aria-label={`${fragments.length} things gathered`}>
         <span class="gathered-count">{fragments.length} gathered</span>
@@ -870,8 +886,7 @@
       onadd={(image, aspectRatio) => {
         fragments = [...fragments, { image, aspectRatio, kind:'tape', x:18, y:64, size:65, rotation:-6 }];
         activeFragment = -1;
-        hearingComplete = true;
-        step = 'finish';
+        step = 'arrange';
       }}
       onsaved={(roll) => soundRolls = [roll, ...soundRolls.filter(item => item.id !== roll.id)]}
       ondeleted={(id) => soundRolls = soundRolls.filter(item => item.id !== id)}
@@ -880,9 +895,9 @@
     <section class="arrange-screen">
       <div class="arrange-heading">
         {#if step === 'arrange'}
-          <span class="count-label">{fragments.length} {fragments.length === 1 ? 'thing' : 'things'}, gathered</span>
-          <h2>Arrange what you noticed.</h2>
-          <p>Drag the pieces. Use the handles to resize and rotate.</p>
+          <span class="count-label">Touch, sight, and sound, gathered</span>
+          <h2>Adjust this page.</h2>
+          <p>Arrange the stickers and tape from your grounding moment. Drag a piece, then resize, rotate, reorder, or remove it.</p>
         {:else}
           <span class="count-label">Today’s grounding journal</span>
           <h2>Touch, sight, and sound,<br />gathered here.</h2>
@@ -909,7 +924,7 @@
               role="button"
               tabindex={step === 'arrange' ? 0 : -1}
               aria-label={`Fragment ${index + 1}`}
-              onkeydown={(event) => { if (event.key === 'Enter' || event.key === ' ') activeFragment = index; }}
+              onkeydown={(event) => fragmentKeyDown(event, index)}
             >
               <img src={fragment.image} alt="" draggable="false" data-fragment={index} />
               {#if step === 'arrange' && activeFragment === index}
@@ -924,16 +939,18 @@
       {#if step === 'arrange'}
         <div class="arrange-actions">
           {#if activeFragment >= 0}
-            <div class="layer-controls" aria-label="Layer order controls">
+            <div class="layer-controls" aria-label="Selected piece controls">
               <button class="secondary layer-button" onclick={() => moveLayer(-1)} disabled={activeFragment === 0}>Send backward</button>
               <button class="secondary layer-button" onclick={() => moveLayer(1)} disabled={activeFragment === fragments.length - 1}>Bring forward</button>
+              {#if fragments[activeFragment]?.kind === 'sticker'}
+                <button class="secondary layer-button remove-page-button" onclick={() => removeFragmentFromPage(activeFragment)} aria-label="Remove selected sticker from this page">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5" /></svg>
+                  Remove sticker
+                </button>
+              {/if}
             </div>
           {/if}
-          {#if hearingComplete}
-            <button class="primary compact" onclick={() => { activeFragment = -1; step = 'finish'; }}>Review today’s page <span>✓</span></button>
-          {:else}
-            <button class="primary compact" onclick={() => { activeFragment = -1; step = 'sound'; }}>Continue to HEAR <span>→</span></button>
-          {/if}
+          <button class="primary compact" onclick={() => { activeFragment = -1; step = 'finish'; }}>Review today’s page <span>✓</span></button>
           {#if savedStickers.length || soundRolls.length}
             <div class="materials">
               <div class="materials-heading"><strong>Your saved pieces</strong><span>Tap a piece to use it again.</span></div>
@@ -1084,9 +1101,12 @@
   .arrange-screen > .secondary { justify-self:start; align-self:start; }
   .arrange-actions { align-self:start; display:flex; flex-direction:column; align-items:flex-start; gap:14px; }
   .materials { width:min(360px,100%); margin-top:8px; padding-top:18px; border-top:1px solid #c8c6bd; }.materials-heading { display:flex; flex-direction:column; gap:4px; margin-bottom:10px; }.materials-heading strong { font-size:13px; }.materials-heading span { color:#767a73; font-size:11px; }.material-strip { display:flex; gap:9px; overflow-x:auto; padding:2px 2px 10px; scrollbar-width:none; }.material-strip::-webkit-scrollbar { display:none; }.material-item { width:92px; flex:0 0 92px; position:relative; border:1px solid #d0cec5; background:#faf9f5; border-radius:10px; overflow:hidden; }.material-add { width:100%; min-height:105px; padding:8px; border:0; background:none; display:flex; flex-direction:column; gap:6px; text-align:left; cursor:pointer; }.material-add img { width:100%; height:62px; object-fit:contain; }.material-item.tape .material-add img { object-fit:cover; }.material-add span { width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:10px; }.material-delete { position:absolute; right:4px; top:4px; width:28px; height:28px; padding:0; border:0; border-radius:50%; background:#fffdf1e8; color:#943f34; box-shadow:0 2px 7px #1b211c1c; cursor:pointer; }
-  .layer-controls { display:flex; gap:8px; }
-  .layer-button { padding:10px 14px; font-size:11px; }
+  .layer-controls { display:flex; flex-wrap:wrap; gap:8px; }
+  .layer-button { min-height:44px; padding:10px 14px; font-size:11px; }
   .layer-button:disabled { opacity:.35; cursor:not-allowed; }
+  .remove-page-button { display:inline-flex; align-items:center; justify-content:center; gap:7px; color:#943f34; border-color:#c6a49d; }
+  .remove-page-button svg { width:16px; height:16px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+  .remove-page-button:active { transform:scale(.97); }
   .canvas-mode header { mix-blend-mode:multiply; }
 
   @media (max-width: 760px) {
