@@ -26,6 +26,12 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>Grounding uses the camera so you can notice and collect objects around you.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Grounding records the sounds you choose to notice and turns them into a personal sound tape, stored on this device.</string>
+	<key>NSHealthShareUsageDescription</key>
+	<string>Grounding reads your heart-rate variability, resting heart rate, respiratory rate, and mindful minutes so it can compare how you are doing today with your own recent baseline and suggest a calming exercise. Your health data stays on this device and is never sent to a server.</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>Grounding can write sample health entries during development testing only.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Grounding lets you choose a photo to create a personal grounding collage.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
@@ -60,8 +66,6 @@
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
-		<string>UIInterfaceOrientationLandscapeLeft</string>
-		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 	<key>UISupportedInterfaceOrientations~ipad</key>
 	<array>

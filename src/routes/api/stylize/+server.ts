@@ -47,7 +47,7 @@ async function generateByAiPro(imageData: string, detectObject: boolean) {
   if (!key) return { ok: false, status: 503, message: 'Server missing AIPRO_API_KEY.' };
 
   const body = new FormData();
-  body.append('model', env.AIPRO_IMAGE_MODEL || 'gpt-image-2');
+  body.append('model', env.AIPRO_IMAGE_MODEL || 'gpt-image-2.5-sunburst');
   body.append('prompt', detectObject ? DETECT_OBJECT_PROMPT : COLLAGE_PROMPT);
   body.append('size', '1024x1024');
   body.append('quality', 'high');

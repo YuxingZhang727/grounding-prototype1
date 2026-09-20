@@ -7,5 +7,6 @@ class GroundingBridgeViewController: CAPBridgeViewController {
     override open func capacitorDidLoad() {
         super.capacitorDidLoad()
         bridge?.registerPluginInstance(NativeVisionSegmentPlugin())
+        bridge?.registerPluginInstance(HealthTrendPlugin())
     }
 }

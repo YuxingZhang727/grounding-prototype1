@@ -1,0 +1,113 @@
+<script lang="ts">
+  import { onMount } from 'svelte';
+  import { goto } from '$app/navigation';
+  import AppIcon from '$lib/AppIcon.svelte';
+  import { deleteRoll, loadRolls, tapeImage, type SoundRoll } from '$lib/sound-tape';
+  import { deleteSticker, loadStickers, type SavedSticker } from '$lib/artifact-store';
+
+  type Tab = 'home' | 'history' | 'exercises' | 'archive' | 'profile';
+  const tabs: { id: Tab; label: string }[] = [
+    { id:'home', label:'Home' }, { id:'history', label:'History' }, { id:'exercises', label:'Exercises' },
+    { id:'archive', label:'Archive' }, { id:'profile', label:'Profile' }
+  ];
+  const methods = [
+    { name:'Breathing', meta:'1–5 min', theme:'breathing', symbol:'◯ 〰' },
+    { name:'Mindfulness', meta:'3–5 min', theme:'mindfulness', symbol:'◒ ＝' },
+    { name:'Sensory Grounding', meta:'5-4-3-2-1', theme:'sensory', symbol:'•  ◦  •  ◦' },
+    { name:'Digital Grounding', meta:'2–5 min', theme:'digital', symbol:'▱ ◇ ▱' }
+  ];
+  let tab: Tab = 'home';
+  let duration = 'all';
+  let rolls: SoundRoll[] = [];
+  let stickers: SavedSticker[] = [];
+  let texture = '';
+  let notice = '';
+
+  function readTab(): Tab {
+    const value = new URLSearchParams(location.search).get('tab') as Tab | null;
+    return tabs.some(item => item.id === value) ? value! : 'home';
+  }
+  function selectTab(next: Tab, replace = false) {
+    tab = next;
+    const url = new URL(location.href); url.searchParams.set('tab', next);
+    void goto(url.pathname + url.search, { replaceState:replace, noScroll:true, keepFocus:true });
+    document.querySelector('.app-scroll')?.scrollTo({ top:0, behavior:'instant' });
+  }
+  function startDigital() { location.href = '/touch?flow=grounding'; }
+  function chooseMethod(name: string) {
+    if (name === 'Digital Grounding') startDigital();
+    else notice = `${name} is represented in the app framework; its active exercise will be built after Digital Grounding.`;
+  }
+  async function removeRoll(roll: SoundRoll) { await deleteRoll(roll.id); rolls = rolls.filter(item => item.id !== roll.id); }
+  async function removeSticker(sticker: SavedSticker) { await deleteSticker(sticker.id); stickers = stickers.filter(item => item.id !== sticker.id); }
+  onMount(() => {
+    selectTab(readTab(), true);
+    texture = sessionStorage.getItem('grounding-touch-background') || '';
+    loadRolls().then(value => rolls = value).catch(() => {});
+    loadStickers().then(value => stickers = value).catch(() => {});
+    const back = () => tab = readTab(); window.addEventListener('popstate', back);
+    return () => window.removeEventListener('popstate', back);
+  });
+</script>
+
+<svelte:head><title>Grounding</title><meta name="description" content="A calm place to check in, choose an exercise, and keep grounding artifacts." /></svelte:head>
+
+<div class="app-shell">
+  <aside class="desktop-rail" aria-label="Primary navigation">
+    <strong>GROUNDING<span>·</span></strong>
+    {#each tabs as item}<button class:active={tab===item.id} onclick={() => selectTab(item.id)}><AppIcon name={item.id} /><span>{item.label}</span></button>{/each}
+  </aside>
+  <main class="app-scroll" tabindex="-1">
+    <div class="page" class:exercises-page={tab === 'exercises'}>
+      {#if tab === 'home'}
+        <header class="page-header"><div><p class="eyebrow">Saturday, September 19</p><h1>Good afternoon.</h1></div><div class="avatar" aria-hidden="true"></div></header>
+        <section class="state-card"><div><p class="eyebrow">Right now</p><h2>A little tense, still moving.</h2><p>Your recent signals are available as context. A quick check-in can make the next step clearer.</p></div><div class="signal"><AppIcon name="signal" size={28}/><span>ECG connected</span></div></section>
+        <section class="focus-card"><div class="focus-copy"><p class="eyebrow">A gentle next step</p><h2>Try three minutes of Digital Grounding</h2><p>Use color, texture, objects, and sound to notice what is around you.</p><button class="primary" onclick={startDigital}>Begin exercise</button></div><div class="paper-motif" aria-hidden="true"><i></i><i></i><b></b></div></section>
+        <div class="section-title"><h2>Later today</h2><button>See plan</button></div>
+        <section class="task-list"><article><AppIcon name="calendar"/><div><strong>Project reading</strong><span>3:30 PM · 25 minutes</span></div><span>Next</span></article><article><AppIcon name="heart"/><div><strong>Check in again</strong><span>After your next task</span></div><span>Later</span></article></section>
+      {:else if tab === 'history'}
+        <header class="page-header"><div><p class="eyebrow">Your patterns</p><h1>History</h1></div></header>
+        <section class="summary-card"><div><strong>4</strong><span>grounding sessions</span></div><div><strong>12m</strong><span>time spent noticing</span></div><div><strong>{rolls.length}</strong><span>sound tapes kept</span></div></section>
+        <section class="trend-card"><div class="section-title"><h2>This week</h2><span>Gentler by Friday</span></div><div class="bars" aria-label="Tension trend: Monday 4, Tuesday 3, Wednesday 4, Thursday 2, Friday 2">{#each [4,3,4,2,2] as value,index}<i style={`height:${22+value*14}px`}><span>{['M','T','W','T','F'][index]}</span></i>{/each}</div><p>Your check-ins eased after short creative exercises. This is a personal pattern, not a diagnosis.</p></section>
+        <h2 class="list-heading">Recent sessions</h2><section class="session-list"><article><span class="method-dot digital"></span><div><strong>Digital Grounding</strong><small>Today · Touch, sight, and sound</small></div><AppIcon name="chevron"/></article><article><span class="method-dot breathing"></span><div><strong>Breathing</strong><small>Thursday · 3 minutes</small></div><AppIcon name="chevron"/></article></section>
+      {:else if tab === 'exercises'}
+        <header class="page-header"><h1>Exercises</h1><div class="avatar" aria-hidden="true"></div></header>
+        <button class="featured" onclick={startDigital}><div><p class="eyebrow">For you</p><h2>Digital Grounding</h2><span>3 min · visual + touch + sound</span></div><div class="digital-lines" aria-hidden="true"><i></i><i></i><i></i></div></button>
+        <div class="filters" aria-label="Filter by duration">{#each [['all','All'],['short','1–3 min'],['five','5 min']] as filter}<button class:active={duration===filter[0]} aria-pressed={duration===filter[0]} onclick={() => duration=filter[0]}>{filter[1]}</button>{/each}</div>
+        <h2 class="list-heading">All methods</h2>
+        <section class="method-grid">{#each methods as method}<button class={method.theme} onclick={() => chooseMethod(method.name)}><span class="method-symbol" aria-hidden="true">{method.symbol}</span><strong>{method.name}</strong><small>{method.meta}</small></button>{/each}</section>
+        {#if notice}<p class="notice" role="status">{notice}</p>{/if}
+      {:else if tab === 'archive'}
+        <header class="page-header"><div><p class="eyebrow">What you have noticed</p><h1>Archive</h1></div></header>
+        <section class="archive-hero"><h2>Your sensory collection</h2><p>Artifacts stay on this device. Return to a detail or use one in a future journal page.</p><div class="archive-count"><strong>{rolls.length + stickers.length + (texture ? 1 : 0)}</strong><span>pieces kept</span></div></section>
+        <div class="artifact-grid">
+          {#if texture}<article class="artifact texture"><img src={texture} alt="Your latest touch texture"/><div><strong>Touch surface</strong><span>Latest grounding session</span></div></article>{/if}
+          {#each stickers as sticker}<article class="artifact"><button class="artifact-delete" onclick={() => removeSticker(sticker)} aria-label={`Delete ${sticker.name}`}>×</button><img class="sticker-image" src={sticker.image} alt={sticker.name}/><div><strong>{sticker.name}</strong><span>Saved sticker</span></div></article>{/each}
+          {#each rolls as roll}<article class="artifact"><button class="artifact-delete" onclick={() => removeRoll(roll)} aria-label={`Delete ${roll.name}`}>×</button><img src={tapeImage(roll.frames,260)} alt={`Sound tape: ${roll.name}`}/><div><strong>{roll.name}</strong><span>{roll.duration.toFixed(1)} seconds · sound tape</span></div></article>{/each}
+          {#if !texture && !rolls.length && !stickers.length}<div class="empty"><div class="paper-motif" aria-hidden="true"><i></i><i></i><b></b></div><h2>Your first piece will appear here.</h2><p>Complete Digital Grounding to keep a texture, collage, or sound tape.</p><button class="primary" onclick={startDigital}>Start Digital Grounding</button></div>{/if}
+        </div>
+      {:else}
+        <header class="page-header"><div><p class="eyebrow">Your space</p><h1>Profile</h1></div><div class="avatar large" aria-hidden="true"></div></header>
+        <section class="profile-card"><h2>Yuxing</h2><p>Grounding adapts to your check-ins and preferences on this device.</p></section>
+        <h2 class="list-heading">Connected context</h2><section class="settings-list"><article><AppIcon name="signal"/><div><strong>ECG signal</strong><small>Connected · used as supporting context</small></div><span class="status-dot"></span></article><article><AppIcon name="heart"/><div><strong>Health permissions</strong><small>Review what the app can read</small></div><AppIcon name="chevron"/></article></section>
+        <h2 class="list-heading">App preferences</h2><section class="settings-list"><article><span class="setting-icon">Aa</span><div><strong>Text and accessibility</strong><small>System text size · reduced motion</small></div><AppIcon name="chevron"/></article><article><span class="setting-icon">↕</span><div><strong>Display orientation</strong><small>Portrait on phone · adaptive on iPad and web</small></div><span>Portrait</span></article></section>
+      {/if}
+    </div>
+  </main>
+  <nav class="bottom-nav" aria-label="Primary navigation">
+    {#each tabs as item}<button class:active={tab===item.id} aria-current={tab===item.id?'page':undefined} onclick={() => selectTab(item.id)}><AppIcon name={item.id}/><span>{item.label}</span></button>{/each}
+  </nav>
+</div>
+
+<style>
+  :global(*){box-sizing:border-box} :global(html){background:#f7f1e7} :global(body){margin:0;color:#2f302d;font-family:Manrope,Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;overscroll-behavior:none} :global(button){font:inherit;color:inherit} :global(button:focus-visible),:global(a:focus-visible){outline:2px solid #b9785f;outline-offset:3px}
+  .app-shell{--bg:#f7f1e7;--surface:#fffdf9;--cream:#f1e7d6;--border:#ded6c9;--muted:#6f716b;--sun:#efb23e;--sun-soft:#fcecc6;--teal:#ddebe6;--coral:#efc5b5;min-height:100dvh;background:var(--bg);position:relative;overflow:hidden}.app-scroll{height:100dvh;overflow-y:auto;overscroll-behavior-y:contain;scrollbar-width:none;padding:0 max(env(safe-area-inset-right),0px) calc(100px + env(safe-area-inset-bottom)) max(env(safe-area-inset-left),0px)}.app-scroll::-webkit-scrollbar{display:none}.page{width:min(100%,680px);min-height:100%;margin:auto;padding:calc(22px + env(safe-area-inset-top)) 24px 34px}.page-header{min-height:44px;display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}.page-header h1{font-size:28px;line-height:1.2;margin:0;font-weight:750;letter-spacing:-.025em}.eyebrow{text-transform:uppercase;letter-spacing:.11em;font-size:10px;font-weight:650;color:#b26e54;margin:0 0 7px}.avatar{width:32px;height:32px;border-radius:50%;background:radial-gradient(circle at 50% 38%,#fff8df 0 18%,transparent 19%),linear-gradient(145deg,#f0b33f 0 46%,#dcebe6 47%);border:1px solid #d6c8b6}.avatar.large{width:48px;height:48px}
+  h2{margin:0}.state-card,.focus-card,.summary-card,.trend-card,.profile-card,.settings-list,.session-list{border:1px solid var(--border);background:var(--surface);border-radius:22px}.state-card{padding:18px;display:flex;gap:20px;justify-content:space-between}.state-card h2{font-size:19px;margin-bottom:7px}.state-card p:last-child,.focus-card p,.trend-card p,.profile-card p,.archive-hero p{font-size:13px;line-height:1.55;color:var(--muted);margin:0}.signal{width:92px;flex:none;display:grid;place-items:center;text-align:center;color:#4f827b;font-size:10px;gap:5px}.focus-card{margin-top:14px;padding:21px;background:var(--coral);border:0;display:grid;grid-template-columns:1fr 110px;min-height:220px;overflow:hidden}.focus-copy{position:relative;z-index:2}.focus-card h2{font-size:23px;line-height:1.2;margin:5px 0 9px}.primary{min-height:52px;padding:0 20px;border:0;border-radius:16px;background:var(--sun);font-weight:700;cursor:pointer}.focus-card .primary{margin-top:20px}.paper-motif{position:relative;min-height:130px}.paper-motif i,.paper-motif b{position:absolute;display:block;width:82px;height:72px;border-radius:18px;transform:rotate(8deg);background:var(--sun-soft);top:35px;left:0}.paper-motif i:nth-child(2){background:var(--teal);transform:rotate(-8deg);left:35px;top:20px}.paper-motif b{width:45px;height:45px;border-radius:50%;background:var(--sun);left:70px;top:63px}.section-title{display:flex;align-items:center;justify-content:space-between;margin:26px 0 10px}.section-title h2,.list-heading{font-size:17px}.section-title button{border:0;background:none;color:var(--muted);font-size:12px}.task-list,.session-list,.settings-list{overflow:hidden}.task-list article,.session-list article,.settings-list article{min-height:67px;padding:12px 15px;display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--border)}.task-list article:last-child,.session-list article:last-child,.settings-list article:last-child{border:0}.task-list div,.session-list div,.settings-list div{display:flex;flex:1;flex-direction:column;gap:3px}.task-list span,.session-list small,.settings-list small,.settings-list article>span{font-size:11px;color:var(--muted)}
+  .summary-card{display:grid;grid-template-columns:repeat(3,1fr);padding:16px;margin-bottom:14px}.summary-card div{display:flex;flex-direction:column;gap:3px;padding:5px 10px;border-right:1px solid var(--border)}.summary-card div:last-child{border:0}.summary-card strong{font-size:24px}.summary-card span{font-size:10px;color:var(--muted)}.trend-card{padding:18px}.trend-card .section-title{margin:0 0 18px}.trend-card .section-title span{font-size:11px;color:var(--muted)}.bars{height:105px;display:flex;gap:13px;align-items:end;border-bottom:1px solid var(--border);margin-bottom:18px}.bars i{display:block;position:relative;width:28px;max-height:90px;border-radius:9px 9px 0 0;background:#c9ddb8}.bars i:nth-child(3){background:#efc5b5}.bars span{position:absolute;bottom:-17px;width:100%;text-align:center;font:10px/1 Manrope;color:var(--muted)}.list-heading{margin:24px 0 10px}.method-dot{width:34px;height:34px;border-radius:12px;background:var(--coral)}.method-dot.breathing{background:#c8dde8}
+  .featured{width:100%;min-height:126px;border:0;border-radius:26px;background:var(--coral);padding:18px;display:flex;text-align:left;justify-content:space-between;align-items:center;cursor:pointer}.featured h2{font-size:18px;margin:3px 0 5px}.featured span{font-size:11px;color:var(--muted)}.digital-lines{position:relative;width:90px;height:70px}.digital-lines i{position:absolute;width:47px;height:35px;border:2px solid #2f302d;top:18px;left:5px}.digital-lines i:nth-child(2){left:26px;transform:rotate(10deg)}.digital-lines i:nth-child(3){left:47px;transform:rotate(-7deg)}.filters{display:flex;gap:8px;margin:12px 0 14px}.filters button{min-height:44px;flex:1;border:1px solid var(--border);border-radius:999px;background:var(--surface);font-size:13px}.filters button.active{background:var(--sun-soft);border-color:var(--sun)}.method-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.method-grid button{min-height:156px;border:0;border-radius:24px;padding:16px;text-align:left;display:flex;flex-direction:column;cursor:pointer}.method-grid .breathing{background:#c8dde8}.method-grid .mindfulness{background:#ddd6ee}.method-grid .sensory{background:#cfdfc0}.method-grid .digital{background:var(--coral)}.method-symbol{height:57px;display:flex;align-items:center;font:24px Georgia;letter-spacing:.15em}.method-grid strong{font-size:14px;margin-top:auto}.method-grid small{font-size:11px;color:var(--muted);margin-top:7px}.notice{font-size:12px;line-height:1.5;color:var(--muted);margin:14px 2px}
+  .archive-hero{position:relative;padding:20px 100px 20px 20px;border-radius:24px;background:var(--teal);min-height:128px}.archive-hero h2{font-size:20px;margin-bottom:8px}.archive-count{position:absolute;right:20px;top:22px;display:flex;flex-direction:column;text-align:center}.archive-count strong{font-size:30px}.archive-count span{font-size:10px;color:var(--muted)}.artifact-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:16px}.artifact{min-width:0;border:1px solid var(--border);border-radius:20px;overflow:hidden;background:var(--surface);position:relative}.artifact>img{display:block;width:100%;height:130px;object-fit:cover}.artifact>img.sticker-image{object-fit:contain;padding:12px;background:#f5eee3}.artifact>div{padding:13px;display:flex;flex-direction:column;gap:4px}.artifact span{font-size:10px;color:var(--muted)}.artifact-delete{position:absolute;z-index:2;right:8px;top:8px;width:34px;height:34px;border:0;border-radius:50%;background:#fffdf9e8;color:#934235;box-shadow:0 2px 8px #2f302d20}.empty{grid-column:1/-1;padding:30px;text-align:center}.empty .paper-motif{width:130px;margin:auto}.empty h2{font-size:19px}.empty p{font-size:13px;line-height:1.5;color:var(--muted)}.profile-card{padding:19px}.profile-card h2{font-size:19px;margin-bottom:4px}.setting-icon{width:24px;text-align:center;color:#6b7e77}.status-dot{width:10px!important;height:10px;border-radius:50%;background:#4f9e95}
+  .bottom-nav{position:fixed;z-index:20;left:max(24px,env(safe-area-inset-left));right:max(24px,env(safe-area-inset-right));bottom:max(16px,env(safe-area-inset-bottom));max-width:640px;margin:auto;height:72px;padding:10px 12px;display:flex;align-items:center;justify-content:space-between;border-radius:24px;background:rgba(241,231,214,.96);box-shadow:0 8px 24px rgba(45,40,35,.1);backdrop-filter:blur(16px)}.bottom-nav button{width:58px;height:52px;border:0;border-radius:18px;background:none;color:#72766f;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;cursor:pointer}.bottom-nav button.active{background:var(--sun-soft);color:#2f302d}.bottom-nav span{font-size:9px}.desktop-rail{display:none}
+  @media(max-width:374px){.page{padding-inline:18px}.focus-card{grid-template-columns:1fr 80px}.method-grid{gap:12px}.method-grid button{min-height:145px}.summary-card span{font-size:9px}.bottom-nav{left:12px;right:12px}.bottom-nav button{width:52px}.artifact-grid{grid-template-columns:1fr}}
+  @media(min-width:900px){.app-shell{display:grid;grid-template-columns:230px 1fr}.desktop-rail{display:flex;height:100dvh;padding:calc(32px + env(safe-area-inset-top)) 20px calc(24px + env(safe-area-inset-bottom));flex-direction:column;gap:8px;border-right:1px solid var(--border);background:#f3ebde}.desktop-rail strong{font-size:18px;letter-spacing:.12em;margin:0 10px 30px}.desktop-rail strong span{color:#b9785f}.desktop-rail button{height:48px;border:0;border-radius:15px;background:none;display:flex;align-items:center;gap:12px;padding:0 15px;color:var(--muted)}.desktop-rail button.active{background:var(--sun-soft);color:#2f302d}.app-scroll{padding-bottom:24px}.page{width:min(100%,820px);padding:48px}.bottom-nav{display:none}.method-grid{grid-template-columns:repeat(4,1fr)}.focus-card{grid-template-columns:1fr 220px}}
+  @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;animation-duration:.01ms!important;transition-duration:.01ms!important}}
+</style>

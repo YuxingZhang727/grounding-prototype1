@@ -2,6 +2,14 @@
 
 A mobile-first visual grounding exercise that helps people notice things around them, separate those objects from a photo, and arrange the resulting cutouts into a personal collage.
 
+## App framework
+
+The default launch now opens `/app`, a portrait-first application shell based on the existing Figma direction. Its top-level destinations are Home, History, Exercises, Archive, and Profile. The mobile version keeps these destinations in a safe-area-aware bottom bar; widths from 900 px use a sidebar. Each destination has a working framework, while Digital Grounding remains the implemented exercise.
+
+Digital Grounding opens as a focused flow without the global tab bar. A persistent step control lets people move among TOUCH, SEE, and HEAR or leave for Exercises. Step changes create navigation history, so browser and native back gestures remain meaningful. On mobile, each TOUCH question is composed as one app screen instead of stacking the preview and controls into a long page.
+
+The web viewport uses `viewport-fit=cover`, and custom controls apply `env(safe-area-inset-*)` independently on all four edges. Backgrounds remain full bleed. Foreground text, buttons, step controls, and navigation stay inset. The iPhone and Android builds are portrait-only; iPad keeps portrait and landscape support, and the normal web build remains responsive.
+
 ## Current flow
 
 1. Describe a remembered touch and generate the journal background.
@@ -10,6 +18,18 @@ A mobile-first visual grounding exercise that helps people notice things around 
 4. Review the live mask on the source photo, confirm it, then inspect the enlarged cutout in a fixed-size preview.
 5. Continue to “Make sticker” and transform the cutout with an AI image-editing model.
 6. Arrange the collected pieces over the generated tactile background.
+7. Continue to HEAR, record a sound tape, pull out a chosen length, and drag down to tear it into a focused audio preview.
+8. Save the tape to the listening library if desired, then add it to today's journal to complete TOUCH → SEE → HEAR.
+
+## HEAR sound tape
+
+Open `/?start=sound` to preview HEAR directly, or choose “Continue to HEAR” after SEE. Hold to record and release to stop, or use the hands-free start/stop buttons. Each recording is capped at 30 seconds. Four aligned rows of dots respond to loudness through spacing and size. A continuous spectral-brightness mapping moves the tape from warm clay toward sage without abrupt palette changes; richness only adjusts saturation. These are descriptive audio features, not pitch recognition or sound classification. Quiet audio keeps the pattern close to its regular grid.
+
+Recordings are saved only when the user chooses “Save this tape.” IndexedDB stores the audio Blob, feature frames, waveform trace, name, and duration in `grounding-sound/rolls`; clearing app/site data removes them. Dragging down at the machine opens a focused preview with a tape-shaped player. “Add to today’s collage” places the chosen strip on the final journal page.
+
+Finished SEE cutouts are stored as reusable stickers in `grounding-artifacts/stickers`. The collage editor shows saved stickers and sound tapes in a reusable materials tray. Deleting a saved item removes it from future trays and Archive while leaving any copy already placed on the current journal page intact.
+
+`src/lib/SoundTape.svelte` owns microphone lifecycle and controls; `src/lib/sound-tape.ts` owns feature analysis, SVG generation, and roll storage. Capture uses `getUserMedia`, Web Audio and MediaRecorder with runtime MIME detection (MP4 preferred when supported). Nothing is uploaded. Backgrounding or leaving HEAR stops the microphone. iOS has `NSMicrophoneUsageDescription`; real-device permission, interruption and playback checks are still required after installing the Capacitor build.
 
 The prototype uses SvelteKit and Capacitor. Web and native-shell builds use the bundled MediaPipe Interactive Segmenter v2 stroke API. MediaPipe runs in a Worker, renders the live mask on top of the source photo, and generates the transparent preview separately. High-resolution camera input is resized before segmentation. The selected cutout is sent through the server to AI PRO API for the artistic transformation. Capacitor packages the same interface for iOS and Android and uses the native camera on devices.
 

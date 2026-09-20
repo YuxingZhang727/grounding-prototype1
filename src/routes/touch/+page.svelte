@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { generateTouchTexture } from '$lib/touch-texture';
+  import GroundingSteps from '$lib/GroundingSteps.svelte';
 
   type TouchStep = 'texture' | 'temperature' | 'result';
 
@@ -70,6 +71,15 @@
     }
     window.location.href = '/?start=see';
   }
+
+  function selectGroundingStage(next: 'touch' | 'see' | 'hear') {
+    if (next === 'touch') return;
+    try {
+      sessionStorage.setItem('grounding-touch-background', textureUrl);
+      sessionStorage.setItem('grounding-touch-summary', JSON.stringify({ textures:selectedTextures, temperature }));
+    } catch (error) { console.warn('Could not store the touch background.', error); }
+    window.location.href = next === 'see' ? '/?start=see' : '/?start=sound';
+  }
 </script>
 
 <svelte:head>
@@ -77,7 +87,8 @@
   <meta name="description" content="Translate a remembered touch into a tactile journal background." />
 </svelte:head>
 
-<main style={`--touch-paper:${textureUrl ? `url(${textureUrl})` : 'none'}`}>
+<GroundingSteps active="touch" onselect={selectGroundingStage} />
+<main class:result={step === 'result'} style={`--touch-paper:${textureUrl ? `url(${textureUrl})` : 'none'}`}>
   <header>
     <a class="wordmark" href="/">GROUNDING<span>·</span></a>
     <span class="touch-mark">01 · TOUCH</span>
@@ -155,7 +166,7 @@
   main { min-height:100svh; background:#f3f0e9; position:relative; overflow:hidden; isolation:isolate; }
   main::before { content:""; position:fixed; inset:0; pointer-events:none; opacity:.2; background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.15'/%3E%3C/svg%3E"); mix-blend-mode:multiply; }
   main::after { content:""; position:fixed; inset:0; z-index:-1; pointer-events:none; background-image:var(--touch-paper); background-size:cover; background-position:center; opacity:.13; mix-blend-mode:multiply; transition:opacity .35s ease; }
-  header { height:calc(78px + env(safe-area-inset-top)); padding:env(safe-area-inset-top) clamp(22px,4vw,62px) 0; position:absolute; inset:0 0 auto; z-index:5; display:flex; align-items:center; justify-content:space-between; }
+  header { display:none; }
   .wordmark { color:inherit; text-decoration:none; font-family:Georgia,serif; font-size:22px; letter-spacing:.16em; }
   .wordmark span { color:#c54b34; }
   .touch-mark,.eyebrow,.step-count,.preview-label { text-transform:uppercase; font-size:10px; font-weight:650; letter-spacing:.2em; }
@@ -196,13 +207,14 @@
   .preview-label { position:absolute; z-index:2; left:18px; top:18px; padding:8px 11px; color:#fff; background:rgba(27,33,28,.7); border-radius:100px; }
   .texture-panel p { position:absolute; z-index:2; left:18px; bottom:16px; margin:0; padding:8px 11px; color:#fff; background:rgba(27,33,28,.7); border-radius:100px; text-transform:capitalize; font-size:10px; letter-spacing:.08em; }
   @media (max-width:900px) {
-    main { overflow:auto; }
-    .touch-layout { min-height:100svh; display:flex; flex-direction:column; padding:calc(88px + env(safe-area-inset-top)) 18px max(28px, env(safe-area-inset-bottom)); gap:28px; }
-    .question-panel { max-width:560px; order:2; }
-    .texture-panel { width:min(76vw,320px); aspect-ratio:3/4; max-height:44svh; order:1; justify-self:center; flex:none; }
+    main { height:100dvh; overflow:hidden; }
+    .touch-layout { height:100dvh; min-height:0; display:block; overflow-y:auto; overscroll-behavior-y:contain; padding:calc(88px + env(safe-area-inset-top)) 20px max(24px, env(safe-area-inset-bottom)); }
+    .question-panel { max-width:560px; margin:auto; }
+    .texture-panel { display:none; }
     .eyebrow { display:none; }
-    h1 { font-size:43px; }
+    h1 { font-size:clamp(38px,11vw,46px); }
     .texture-grid { grid-template-columns:repeat(2,1fr); }
+    .slider-wrap { margin:48px 0 44px; }
   }
   @media (prefers-reduced-motion:reduce) {
     *,*::before,*::after { scroll-behavior:auto !important; transition-duration:.01ms !important; animation-duration:.01ms !important; }

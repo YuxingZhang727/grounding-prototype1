@@ -1,11 +1,17 @@
 <script lang="ts">
   import { Capacitor } from '@capacitor/core';
+  import { pushState } from '$app/navigation';
   import { onDestroy, onMount, tick } from 'svelte';
+  import SoundTape from '$lib/SoundTape.svelte';
+  import GroundingSteps from '$lib/GroundingSteps.svelte';
+  import { deleteSticker, loadStickers, saveSticker, type SavedSticker } from '$lib/artifact-store';
+  import { deleteRoll, loadRolls, tapeImage, type SoundRoll } from '$lib/sound-tape';
 
-  type Step = 'welcome' | 'camera' | 'crop' | 'segment' | 'fragment' | 'arrange' | 'finish';
+  type Step = 'welcome' | 'camera' | 'crop' | 'segment' | 'fragment' | 'arrange' | 'finish' | 'sound';
   type Fragment = {
     image:string; aspectRatio:number;
     x:number; y:number; size:number; rotation:number;
+    artifactId?:string; kind?:'sticker'|'tape';
   };
   type Gesture = {
     mode:'drag'|'resize'|'rotate'; index:number; startX:number; startY:number;
@@ -47,6 +53,9 @@
   let segmentationQueued = false;
   let directAiMode = false;
   let textureBackground = '';
+  let savedStickers: SavedSticker[] = [];
+  let soundRolls: SoundRoll[] = [];
+  let hearingComplete = false;
   const MIN_STROKE_LENGTH = 5;
 
   const placements = [
@@ -94,6 +103,15 @@
 
   function beginGrounding() {
     window.location.href = '/touch?flow=grounding';
+  }
+
+  function selectGroundingStage(next: 'touch' | 'see' | 'hear') {
+    if (next === 'touch') { stopCamera(); window.location.href = '/touch?flow=grounding'; return; }
+    const url = new URL(window.location.href); url.searchParams.set('start', next);
+    pushState(url.pathname + url.search, { groundingStep:next });
+    if (next === 'hear') { stopCamera(); step = 'sound'; return; }
+    if (fragments.length) { stopCamera(); activeFragment = -1; step = 'arrange'; return; }
+    void begin();
   }
 
   function stopCamera() {
@@ -323,12 +341,43 @@
     const index = fragments.length;
     const sourceImage = transformedImage || segmentedImage;
     if (!sourceImage) return;
+    const sticker: SavedSticker = {
+      id:crypto.randomUUID(), image:sourceImage, aspectRatio:segmentedAspectRatio,
+      name:`Sticker ${savedStickers.length+1}`, created:Date.now()
+    };
     fragments = [...fragments, {
       image: sourceImage,
       aspectRatio: segmentedAspectRatio,
+      artifactId:sticker.id,
+      kind:'sticker',
       ...placementFor(index)
     }];
+    savedStickers = [sticker, ...savedStickers];
+    void saveSticker(sticker).catch(() => { savedStickers = savedStickers.filter(item => item.id !== sticker.id); });
     step = 'fragment';
+  }
+
+  function addSavedSticker(sticker: SavedSticker) {
+    const index = fragments.length;
+    fragments = [...fragments, { image:sticker.image, aspectRatio:sticker.aspectRatio, artifactId:sticker.id, kind:'sticker', ...placementFor(index) }];
+    activeFragment = index;
+  }
+
+  function addSavedTape(roll: SoundRoll) {
+    const index = fragments.length;
+    const width = 360;
+    fragments = [...fragments, { image:tapeImage(roll.frames,width), aspectRatio:width/88, artifactId:roll.id, kind:'tape', x:14+(index%3)*8, y:58+(index%3)*7, size:62, rotation:-5+(index%3)*5 }];
+    activeFragment = index;
+  }
+
+  async function removeSavedSticker(sticker: SavedSticker) {
+    await deleteSticker(sticker.id);
+    savedStickers = savedStickers.filter(item => item.id !== sticker.id);
+  }
+
+  async function removeSavedTape(roll: SoundRoll) {
+    await deleteRoll(roll.id);
+    soundRolls = soundRolls.filter(item => item.id !== roll.id);
   }
 
   function chooseAgain() {
@@ -531,12 +580,27 @@
     capturedImage = '';
     clearSegmentation();
     activeFragment = -1;
+    hearingComplete = false;
     step = 'welcome';
   }
 
   onMount(() => {
     textureBackground = sessionStorage.getItem('grounding-touch-background') || '';
-    if (new URLSearchParams(window.location.search).get('start') === 'see') begin();
+    loadStickers().then(value => savedStickers=value).catch(() => {});
+    loadRolls().then(value => soundRolls=value).catch(() => {});
+    const start = new URLSearchParams(window.location.search).get('start');
+    if (start === 'see') begin();
+    if (start === 'sound') step = 'sound';
+    const restoreStage = () => {
+      const current = new URLSearchParams(window.location.search).get('start');
+      if (current === 'sound') { stopCamera(); step = 'sound'; }
+      if (current === 'see') {
+        if (fragments.length) { stopCamera(); activeFragment = -1; step = 'arrange'; }
+        else void begin();
+      }
+    };
+    window.addEventListener('popstate', restoreStage);
+    return () => window.removeEventListener('popstate', restoreStage);
   });
 
   onDestroy(stopCamera);
@@ -547,9 +611,12 @@
   <meta name="description" content="Translate touch and sight into a personal grounding collage." />
 </svelte:head>
 
-<main class:dark={step === 'camera'} class:canvas-mode={step === 'arrange' || step === 'finish'}>
+{#if step !== 'welcome'}
+  {#key step}<GroundingSteps active={step === 'sound' || step === 'finish' ? 'hear' : 'see'} onselect={selectGroundingStage} />{/key}
+{/if}
+<main class:dark={step === 'camera'} class:canvas-mode={step === 'arrange' || step === 'finish'} class:in-flow={step !== 'welcome'}>
   <header>
-    <button class="wordmark" onclick={restart} aria-label="Return to start">{step === 'welcome' ? 'GROUNDING' : 'SEE'}<span>·</span></button>
+    <button class="wordmark" onclick={restart} aria-label="Return to start">{step === 'welcome' ? 'GROUNDING' : step === 'sound' ? 'HEAR' : 'SEE'}<span>·</span></button>
     {#if step !== 'welcome' && step !== 'finish'}
       <div class="progress" aria-label={`${fragments.length} things gathered`}>
         <span class="gathered-count">{fragments.length} gathered</span>
@@ -798,6 +865,17 @@
       </div>
     </section>
 
+  {:else if step === 'sound'}
+    <SoundTape
+      onadd={(image, aspectRatio) => {
+        fragments = [...fragments, { image, aspectRatio, kind:'tape', x:18, y:64, size:65, rotation:-6 }];
+        activeFragment = -1;
+        hearingComplete = true;
+        step = 'finish';
+      }}
+      onsaved={(roll) => soundRolls = [roll, ...soundRolls.filter(item => item.id !== roll.id)]}
+      ondeleted={(id) => soundRolls = soundRolls.filter(item => item.id !== id)}
+    />
   {:else if step === 'arrange' || step === 'finish'}
     <section class="arrange-screen">
       <div class="arrange-heading">
@@ -806,9 +884,9 @@
           <h2>Arrange what you noticed.</h2>
           <p>Drag the pieces. Use the handles to resize and rotate.</p>
         {:else}
-          <span class="count-label">Your collage</span>
-          <h2>This is what you noticed,<br />here and now.</h2>
-          <p>Made from the things you noticed around you.</p>
+          <span class="count-label">Today’s grounding journal</span>
+          <h2>Touch, sight, and sound,<br />gathered here.</h2>
+          <p>Your texture became the page, your stickers hold what you saw, and your tape keeps what you heard.</p>
         {/if}
       </div>
       <div class="collage-shell">
@@ -840,7 +918,7 @@
               {/if}
             </div>
           {/each}
-          <span class="canvas-mark">SEE / {String(fragments.length).padStart(2, '0')}</span>
+          <span class="canvas-mark">TODAY / {String(fragments.length).padStart(2, '0')}</span>
         </div>
       </div>
       {#if step === 'arrange'}
@@ -851,10 +929,28 @@
               <button class="secondary layer-button" onclick={() => moveLayer(1)} disabled={activeFragment === fragments.length - 1}>Bring forward</button>
             </div>
           {/if}
-          <button class="primary compact" onclick={() => { activeFragment = -1; step = 'finish'; }}>Done <span>✓</span></button>
+          {#if hearingComplete}
+            <button class="primary compact" onclick={() => { activeFragment = -1; step = 'finish'; }}>Review today’s page <span>✓</span></button>
+          {:else}
+            <button class="primary compact" onclick={() => { activeFragment = -1; step = 'sound'; }}>Continue to HEAR <span>→</span></button>
+          {/if}
+          {#if savedStickers.length || soundRolls.length}
+            <div class="materials">
+              <div class="materials-heading"><strong>Your saved pieces</strong><span>Tap a piece to use it again.</span></div>
+              <div class="material-strip">
+                {#each savedStickers as sticker}
+                  <div class="material-item"><button class="material-add" onclick={() => addSavedSticker(sticker)} aria-label={`Add ${sticker.name} to this collage`}><img src={sticker.image} alt="" /><span>{sticker.name}</span></button><button class="material-delete" onclick={() => removeSavedSticker(sticker)} aria-label={`Delete ${sticker.name}`}>×</button></div>
+                {/each}
+                {#each soundRolls as roll}
+                  <div class="material-item tape"><button class="material-add" onclick={() => addSavedTape(roll)} aria-label={`Add ${roll.name} to this collage`}><img src={tapeImage(roll.frames,180)} alt="" /><span>{roll.name}</span></button><button class="material-delete" onclick={() => removeSavedTape(roll)} aria-label={`Delete ${roll.name}`}>×</button></div>
+                {/each}
+              </div>
+            </div>
+          {/if}
         </div>
       {:else}
-        <button class="secondary" onclick={restart}>Start again</button>
+        <button class="secondary" onclick={() => step = 'arrange'}>Adjust this page</button>
+        <button class="primary compact" onclick={() => window.location.href='/app?tab=archive'}>Finish grounding <span>✓</span></button>
       {/if}
     </section>
   {/if}
@@ -868,6 +964,7 @@
   :global(button) { color: inherit; }
 
   main { --ink:#1b211c; --paper:#f3f0e9; min-height: 100svh; background: var(--paper); overflow-x:hidden; position: relative; transition: background .3s ease; }
+  main.in-flow > header { display:none; }
   main::before { content:""; position:fixed; inset:0; pointer-events:none; opacity:.22; background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.15'/%3E%3C/svg%3E"); mix-blend-mode:multiply; }
   main.dark { --ink:#f3f0e9; --paper:#17201b; }
   header { height:calc(84px + env(safe-area-inset-top)); padding:env(safe-area-inset-top) clamp(24px,5vw,72px) 0; display:flex; align-items:center; justify-content:space-between; position:absolute; top:0; left:0; right:0; z-index:30; }
@@ -986,6 +1083,7 @@
   .canvas-mark { position:absolute; right:15px; bottom:12px; font-size:8px; letter-spacing:.18em; color:#8d8e86; }
   .arrange-screen > .secondary { justify-self:start; align-self:start; }
   .arrange-actions { align-self:start; display:flex; flex-direction:column; align-items:flex-start; gap:14px; }
+  .materials { width:min(360px,100%); margin-top:8px; padding-top:18px; border-top:1px solid #c8c6bd; }.materials-heading { display:flex; flex-direction:column; gap:4px; margin-bottom:10px; }.materials-heading strong { font-size:13px; }.materials-heading span { color:#767a73; font-size:11px; }.material-strip { display:flex; gap:9px; overflow-x:auto; padding:2px 2px 10px; scrollbar-width:none; }.material-strip::-webkit-scrollbar { display:none; }.material-item { width:92px; flex:0 0 92px; position:relative; border:1px solid #d0cec5; background:#faf9f5; border-radius:10px; overflow:hidden; }.material-add { width:100%; min-height:105px; padding:8px; border:0; background:none; display:flex; flex-direction:column; gap:6px; text-align:left; cursor:pointer; }.material-add img { width:100%; height:62px; object-fit:contain; }.material-item.tape .material-add img { object-fit:cover; }.material-add span { width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:10px; }.material-delete { position:absolute; right:4px; top:4px; width:28px; height:28px; padding:0; border:0; border-radius:50%; background:#fffdf1e8; color:#943f34; box-shadow:0 2px 7px #1b211c1c; cursor:pointer; }
   .layer-controls { display:flex; gap:8px; }
   .layer-button { padding:10px 14px; font-size:11px; }
   .layer-button:disabled { opacity:.35; cursor:not-allowed; }
