@@ -614,7 +614,8 @@
     return new Promise<HTMLImageElement>((resolve, reject) => {
       const image = new Image();
       image.onload = () => resolve(image);
-      image.onerror = () => reject(new Error('A page element could not be rendered.'));
+      image.onerror = () => reject(new Error('An older externally hosted sticker could not be included. Please recreate that sticker once, then finish the page again.'));
+      if (/^https?:\/\//.test(source)) image.crossOrigin = 'anonymous';
       image.src = source;
     });
   }
@@ -650,7 +651,14 @@
       context.restore();
     }
 
-    return canvas.toDataURL('image/jpeg', .9);
+    try {
+      return canvas.toDataURL('image/jpeg', .9);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'SecurityError') {
+        throw new Error('An older externally hosted sticker is blocking page export. Please recreate that sticker once, then finish the page again.');
+      }
+      throw error;
+    }
   }
 
   async function finishGrounding() {

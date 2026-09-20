@@ -39,6 +39,24 @@ function parseBase64DataUrl(input: string) {
   return { mimeType: match[1], data: match[2] };
 }
 
+async function downloadGeneratedImage(sourceUrl: string) {
+  let url: URL;
+  try {
+    url = new URL(sourceUrl);
+  } catch {
+    throw new Error('AI returned an invalid image URL.');
+  }
+  if (url.protocol !== 'https:') throw new Error('AI returned an unsupported image URL.');
+
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`AI image download failed (${response.status}).`);
+  const mimeType = response.headers.get('content-type')?.split(';')[0]?.trim() || 'image/png';
+  if (!mimeType.startsWith('image/')) throw new Error('AI returned a non-image file.');
+  const bytes = await response.arrayBuffer();
+  if (bytes.byteLength > 25 * 1024 * 1024) throw new Error('AI image was too large to save.');
+  return `data:${mimeType};base64,${Buffer.from(bytes).toString('base64')}`;
+}
+
 async function generateByAiPro(imageData: string, detectObject: boolean) {
   const parsed = parseBase64DataUrl(imageData);
   if (!parsed) return { ok: false, status: 400, message: 'Invalid image format' };
@@ -77,7 +95,18 @@ async function generateByAiPro(imageData: string, detectObject: boolean) {
     return { ok: false, status: 502, message: 'OpenAI response did not include an image.' };
   }
 
-  const image = first.b64_json ? `data:image/png;base64,${first.b64_json}` : first.url;
+  let image: string;
+  try {
+    image = first.b64_json
+      ? `data:image/png;base64,${first.b64_json}`
+      : await downloadGeneratedImage(first.url);
+  } catch (error) {
+    return {
+      ok: false,
+      status: 502,
+      message: error instanceof Error ? error.message : 'AI image could not be prepared.'
+    };
+  }
   return { ok: true, image, status: 200 };
 }
 
