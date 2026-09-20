@@ -432,17 +432,23 @@
   }
 
   async function stylizeWithAI(sourceUrl: string, detectObject = false) {
-    const endpoint = import.meta.env.VITE_STYLIZE_API_URL || '/api/stylize';
-    if (Capacitor.isNativePlatform() && endpoint.startsWith('/')) {
-      throw new Error('Native app needs VITE_STYLIZE_API_URL pointing to the deployed stylize API.');
-    }
+    const endpoint = import.meta.env.VITE_STYLIZE_API_URL
+      || (Capacitor.isNativePlatform()
+        ? 'https://grounding-prototype1.yuxing050727.workers.dev/api/stylize'
+        : '/api/stylize');
     // Resolve fetch at call time so SvelteKit never treats this browser-only
     // interaction as an eager server-side request during SSR.
-    const response = await globalThis.fetch(endpoint, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ image: sourceUrl, detectObject })
-    });
+    let response: Response;
+    try {
+      response = await globalThis.fetch(endpoint, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ image: sourceUrl, detectObject })
+      });
+    } catch {
+      const host = endpoint.startsWith('http') ? new URL(endpoint).host : window.location.host;
+      throw new Error(`Could not reach the AI service at ${host}. Check this device's internet connection and try again.`);
+    }
 
     if (!response.ok) {
       const payload = await response.json().catch(() => null);
@@ -467,8 +473,8 @@
       segmentedAspectRatio = 1;
       transformStatus = 'Rubber-stamp collage piece ready.';
     } catch (error) {
-      console.error(error);
       const fallbackMessage = error instanceof Error ? error.message : 'Could not use AI conversion.';
+      console.error('AI transform failed:', fallbackMessage);
       if (directAiMode) {
         transformedImage = '';
         transformStatus = fallbackMessage;
