@@ -208,13 +208,20 @@
   .texture-panel p { position:absolute; z-index:2; left:18px; bottom:16px; margin:0; padding:8px 11px; color:#fff; background:rgba(27,33,28,.7); border-radius:100px; text-transform:capitalize; font-size:10px; letter-spacing:.08em; }
   @media (max-width:900px) {
     main { height:100dvh; overflow:hidden; }
-    .touch-layout { height:100dvh; min-height:0; display:block; overflow-y:auto; overscroll-behavior-y:contain; padding:calc(88px + env(safe-area-inset-top)) 20px max(24px, env(safe-area-inset-bottom)); }
-    .question-panel { max-width:560px; margin:auto; }
-    .texture-panel { display:none; }
+    .touch-layout { height:100dvh; min-height:0; display:flex; flex-direction:column; gap:24px; align-items:stretch; overflow-y:auto; overscroll-behavior-y:contain; -webkit-overflow-scrolling:touch; padding:calc(88px + env(safe-area-inset-top)) 20px max(32px, calc(20px + env(safe-area-inset-bottom))); }
+    .question-panel { max-width:560px; width:100%; margin:0 auto; flex:0 0 auto; }
+    .texture-panel { display:block; order:-1; width:min(54vw,220px); max-width:100%; aspect-ratio:3/4; align-self:center; justify-self:auto; flex:0 0 auto; box-shadow:3px 3px 0 rgba(255,255,255,.5),6px 6px 0 rgba(112,101,81,.07),0 16px 38px rgba(38,42,36,.16); }
+    .preview-label { left:10px; top:10px; padding:6px 8px; font-size:8px; }
+    .texture-panel p { left:10px; right:10px; bottom:10px; max-width:calc(100% - 20px); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding:6px 8px; }
     .eyebrow { display:none; }
     h1 { font-size:clamp(38px,11vw,46px); }
     .texture-grid { grid-template-columns:repeat(2,1fr); }
     .slider-wrap { margin:48px 0 44px; }
+  }
+  @media (max-width:900px) and (orientation:landscape) {
+    .touch-layout { display:grid; grid-template-columns:minmax(150px,32vw) minmax(0,1fr); gap:24px; align-items:start; padding-top:calc(76px + env(safe-area-inset-top)); }
+    .texture-panel { order:0; grid-column:1; grid-row:1; width:min(100%,calc((100svh - 104px) * .75),210px); align-self:start; position:relative; top:auto; }
+    .question-panel { grid-column:2; grid-row:1; }
   }
   @media (prefers-reduced-motion:reduce) {
     *,*::before,*::after { scroll-behavior:auto !important; transition-duration:.01ms !important; animation-duration:.01ms !important; }

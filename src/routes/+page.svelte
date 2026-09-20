@@ -4,7 +4,7 @@
   import { onDestroy, onMount, tick } from 'svelte';
   import SoundTape from '$lib/SoundTape.svelte';
   import GroundingSteps from '$lib/GroundingSteps.svelte';
-  import { deleteSticker, loadStickers, saveSticker, type SavedSticker } from '$lib/artifact-store';
+  import { deleteSticker, loadStickers, saveJournal, saveSticker, type SavedSticker } from '$lib/artifact-store';
   import { deleteRoll, loadRolls, tapeImage, type SoundRoll } from '$lib/sound-tape';
 
   type Step = 'welcome' | 'camera' | 'crop' | 'segment' | 'fragment' | 'arrange' | 'finish' | 'sound';
@@ -55,6 +55,8 @@
   let textureBackground = '';
   let savedStickers: SavedSticker[] = [];
   let soundRolls: SoundRoll[] = [];
+  let isSavingJournal = false;
+  let journalSaveError = '';
   const MIN_STROKE_LENGTH = 5;
 
   const placements = [
@@ -598,6 +600,68 @@
 
   function fragmentPointerUp() { gesture = null; }
 
+  function loadPageImage(source: string) {
+    return new Promise<HTMLImageElement>((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error('A page element could not be rendered.'));
+      image.src = source;
+    });
+  }
+
+  async function renderJournalPage() {
+    const size = 1200;
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('This device could not create the journal image.');
+
+    context.fillStyle = '#faf9f5';
+    context.fillRect(0, 0, size, size);
+    if (textureBackground) {
+      const background = await loadPageImage(textureBackground);
+      const scale = Math.max(size / background.naturalWidth, size / background.naturalHeight);
+      const width = background.naturalWidth * scale;
+      const height = background.naturalHeight * scale;
+      context.drawImage(background, (size - width) / 2, (size - height) / 2, width, height);
+    }
+
+    for (const fragment of fragments) {
+      const image = await loadPageImage(fragment.image);
+      const width = fragment.size / 100 * size;
+      const height = width / fragment.aspectRatio;
+      const x = fragment.x / 100 * size;
+      const y = fragment.y / 100 * size;
+      context.save();
+      context.translate(x + width / 2, y + height / 2);
+      context.rotate(fragment.rotation * Math.PI / 180);
+      context.drawImage(image, -width / 2, -height / 2, width, height);
+      context.restore();
+    }
+
+    return canvas.toDataURL('image/jpeg', .9);
+  }
+
+  async function finishGrounding() {
+    if (isSavingJournal) return;
+    isSavingJournal = true;
+    journalSaveError = '';
+    try {
+      await saveJournal({
+        id: crypto.randomUUID(),
+        image: await renderJournalPage(),
+        created: Date.now(),
+        stickerCount: fragments.filter(fragment => fragment.kind === 'sticker').length,
+        tapeCount: fragments.filter(fragment => fragment.kind === 'tape').length
+      });
+      window.location.href = '/app?tab=archive';
+    } catch (error) {
+      journalSaveError = error instanceof Error ? error.message : 'The journal page could not be saved on this device.';
+      isSavingJournal = false;
+    }
+  }
+
   function restart() {
     stopCamera();
     fragments = [];
@@ -973,7 +1037,8 @@
         </div>
       {:else}
         <button class="secondary" onclick={() => step = 'arrange'}>Adjust this page</button>
-        <button class="primary compact" onclick={() => window.location.href='/app?tab=archive'}>Finish grounding <span>✓</span></button>
+        <button class="primary compact" onclick={finishGrounding} disabled={isSavingJournal}>{isSavingJournal ? 'Saving page…' : 'Finish grounding'} <span>✓</span></button>
+        {#if journalSaveError}<p class="journal-save-error" role="alert">{journalSaveError}</p>{/if}
       {/if}
     </section>
   {/if}
@@ -1114,6 +1179,7 @@
   .remove-page-button svg { width:16px; height:16px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
   .remove-page-button:active { transform:scale(.97); }
   .canvas-mode header { mix-blend-mode:multiply; }
+  .journal-save-error { grid-column:1; max-width:330px; margin:0; color:#943f34; font-size:12px; line-height:1.5; }
 
   @media (max-width: 760px) {
     header { height:calc(68px + env(safe-area-inset-top)); padding:env(safe-area-inset-top) 22px 0; }
