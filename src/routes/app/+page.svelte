@@ -13,6 +13,18 @@
     type TrendMetric,
     type TrendsPayload
   } from '$lib/health';
+  import {
+    getLatestWatchSignal,
+    getWatchAvailability,
+    getWatchCheckIns,
+    isWatchSignalNative,
+    onWatchAvailabilityChanged,
+    onWatchCheckIn,
+    onWatchSignal,
+    type WatchAvailability,
+    type WatchCheckIn,
+    type WatchSignalSnapshot
+  } from '$lib/watch-signal';
 
   type Tab = 'home' | 'history' | 'exercises' | 'archive' | 'profile';
   const tabs: { id: Tab; label: string }[] = [
@@ -43,6 +55,53 @@
   let healthTrends: TrendsPayload | null = null;
   let healthPanelOpen = false;
   let healthMessage = 'Checking whether Apple Health is available…';
+  let watchAvailability: WatchAvailability = { available:false, activated:false, paired:false, watchAppInstalled:false, reachable:false };
+  let watchSnapshot: WatchSignalSnapshot = { available:false };
+  let watchCheckIns: WatchCheckIn[] = [];
+
+  function watchIsLive() {
+    if (!watchSnapshot.isRunning || !watchSnapshot.timestamp) return false;
+    const age = Date.now() - new Date(watchSnapshot.timestamp).getTime();
+    return Number.isFinite(age) && age >= 0 && age < 15_000;
+  }
+  function watchStatusLabel() {
+    if (!watchAvailability.activated) return 'Connecting';
+    if (!watchAvailability.paired) return 'Not paired';
+    if (watchIsLive()) return 'Live now';
+    if (!watchAvailability.watchAppInstalled) return 'Not installed';
+    if (watchAvailability.reachable) return 'Ready';
+    return 'Waiting';
+  }
+  function watchStatusDescription() {
+    if (!watchAvailability.activated) return 'Connecting to your paired Apple Watch…';
+    if (!watchAvailability.paired) return 'Pair an Apple Watch to receive live body signals.';
+    if (watchIsLive()) return watchSnapshot.status || 'Receiving current signals from your watch.';
+    if (!watchAvailability.watchAppInstalled) return 'Install the Grounding Watch app to begin.';
+    return 'Open Grounding on your watch and start a measurement.';
+  }
+  function watchBPM() {
+    return typeof watchSnapshot.bpm === 'number' ? Math.round(watchSnapshot.bpm).toString() : '—';
+  }
+  function watchDelta() {
+    if (typeof watchSnapshot.bpm !== 'number' || typeof watchSnapshot.baselineBPM !== 'number') return 'Building baseline';
+    const delta = Math.round(watchSnapshot.bpm - watchSnapshot.baselineBPM);
+    return `${delta >= 0 ? '+' : ''}${delta} from baseline`;
+  }
+  function watchMotion() {
+    const value = watchSnapshot.motionIntensity ?? 0;
+    if (value < 0.06) return 'Still';
+    if (value < 0.16) return 'Light movement';
+    return 'Moving';
+  }
+  function watchElapsed() {
+    const seconds = Math.max(0, Math.floor(watchSnapshot.elapsedTime ?? 0));
+    return `${String(Math.floor(seconds / 60)).padStart(2,'0')}:${String(seconds % 60).padStart(2,'0')}`;
+  }
+  function checkInTime(timestamp: string) {
+    const date = new Date(timestamp);
+    if (Number.isNaN(date.getTime())) return '';
+    return new Intl.DateTimeFormat(undefined, { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' }).format(date);
+  }
 
   function readTab(): Tab {
     const value = new URLSearchParams(location.search).get('tab') as Tab | null;
@@ -169,8 +228,53 @@
     loadRolls().then(value => rolls = value).catch(() => {});
     loadStickers().then(value => stickers = value).catch(() => {});
     void initializeHealth();
+    const watchListenerHandles: Array<{ remove: () => Promise<void> }> = [];
+    let watchListenersDisposed = false;
+    async function initializeWatch() {
+      if (!isWatchSignalNative()) return;
+      try {
+        // Subscribe before reading initial state so session activation cannot
+        // complete in the small gap between the read and listener setup.
+        const handles = await Promise.all([
+          onWatchSignal(snapshot => {
+            watchSnapshot = snapshot;
+            watchAvailability = {
+              ...watchAvailability,
+              available:true,
+              activated:true,
+              paired:true,
+              watchAppInstalled:true,
+              reachable:true
+            };
+          }),
+          onWatchCheckIn(entry => {
+            watchCheckIns = [entry, ...watchCheckIns.filter(item => item.id !== entry.id)].slice(0, 100);
+            watchAvailability = { ...watchAvailability, available:true, activated:true, paired:true, watchAppInstalled:true };
+          }),
+          onWatchAvailabilityChanged(availability => watchAvailability = availability)
+        ]);
+        if (watchListenersDisposed) {
+          handles.forEach(handle => void handle?.remove());
+        } else {
+          handles.forEach(handle => { if (handle) watchListenerHandles.push(handle); });
+        }
+        [watchAvailability, watchSnapshot, watchCheckIns] = await Promise.all([
+          getWatchAvailability(), getLatestWatchSignal(), getWatchCheckIns()
+        ]);
+        if (watchSnapshot.kind === 'snapshot') {
+          watchAvailability = { ...watchAvailability, paired:true, watchAppInstalled:true };
+        }
+      } catch {
+        watchAvailability = { available:true, activated:false, paired:false, watchAppInstalled:false, reachable:false };
+      }
+    }
+    void initializeWatch();
     const back = () => tab = readTab(); window.addEventListener('popstate', back);
-    return () => window.removeEventListener('popstate', back);
+    return () => {
+      watchListenersDisposed = true;
+      watchListenerHandles.forEach(handle => void handle.remove());
+      window.removeEventListener('popstate', back);
+    };
   });
 </script>
 
@@ -186,12 +290,44 @@
       {#if tab === 'home'}
         <header class="page-header"><div><p class="eyebrow">Saturday, September 19</p><h1>Good afternoon.</h1></div><div class="avatar" aria-hidden="true"></div></header>
         <section class="state-card"><div><p class="eyebrow">Right now</p><h2>A little tense, still moving.</h2><p>Your recent signals are available as context. A quick check-in can make the next step clearer.</p></div><div class="signal"><AppIcon name="signal" size={28}/><span>{healthState === 'connected' ? 'Health context ready' : 'Check-in context'}</span></div></section>
+        {#if isWatchSignalNative()}
+          <section class="watch-live-card" aria-labelledby="watch-live-heading">
+            <div class="watch-live-header">
+              <div><p class="eyebrow">Apple Watch · Live</p><h2 id="watch-live-heading">Current body signals</h2></div>
+              <span class:active={watchIsLive()} class="watch-live-status"><i aria-hidden="true"></i>{watchStatusLabel()}</span>
+            </div>
+            {#if watchIsLive()}
+              <div class="watch-live-grid">
+                <div class="watch-heart"><strong>{watchBPM()}</strong><span>BPM</span><small>{watchDelta()}</small></div>
+                <div><strong>{watchMotion()}</strong><span>Wrist motion</span></div>
+                <div><strong>{watchElapsed()}</strong><span>Session time</span></div>
+              </div>
+            {:else}
+              <div class="watch-live-empty"><AppIcon name="signal" size={26}/><p>{watchStatusDescription()}</p></div>
+            {/if}
+            <p class="watch-live-note">{watchStatusDescription()} Signals are descriptive context, not a diagnosis.</p>
+          </section>
+        {/if}
         <section class="focus-card"><div class="focus-copy"><p class="eyebrow">A gentle next step</p><h2>Try three minutes of Digital Grounding</h2><p>Use color, texture, objects, and sound to notice what is around you.</p><button class="primary" onclick={startDigital}>Begin exercise</button></div><div class="paper-motif" aria-hidden="true"><i></i><i></i><b></b></div></section>
         <div class="section-title"><h2>Later today</h2><button>See plan</button></div>
         <section class="task-list"><article><AppIcon name="calendar"/><div><strong>Project reading</strong><span>3:30 PM · 25 minutes</span></div><span>Next</span></article><article><AppIcon name="heart"/><div><strong>Check in again</strong><span>After your next task</span></div><span>Later</span></article></section>
       {:else if tab === 'history'}
         <header class="page-header"><div><p class="eyebrow">Your patterns</p><h1>History</h1></div></header>
         <section class="summary-card"><div><strong>4</strong><span>grounding sessions</span></div><div><strong>12m</strong><span>time spent noticing</span></div><div><strong>{rolls.length}</strong><span>sound tapes kept</span></div></section>
+        {#if isWatchSignalNative()}
+          <section class="watch-checkins" aria-labelledby="watch-checkins-heading">
+            <div class="section-title"><div><p class="eyebrow">From Apple Watch</p><h2 id="watch-checkins-heading">Momentary anxiety check-ins</h2></div><span>{watchCheckIns.length}</span></div>
+            {#if watchCheckIns.length}
+              <div class="watch-checkin-list">
+                {#each watchCheckIns.slice(0, 5) as entry}
+                  <article><strong>{entry.rating}</strong><div><span>{checkInTime(entry.timestamp)}</span><small>{entry.bpm ? `${Math.round(entry.bpm)} BPM at check-in` : 'No heart-rate sample'} · self-reported 0–10</small></div></article>
+                {/each}
+              </div>
+            {:else}
+              <p class="collection-empty">Check-ins recorded on your watch will appear here automatically.</p>
+            {/if}
+          </section>
+        {/if}
         <section class="trend-card"><div class="section-title"><h2>This week</h2><span>Gentler by Friday</span></div><div class="bars" aria-label="Tension trend: Monday 4, Tuesday 3, Wednesday 4, Thursday 2, Friday 2">{#each [4,3,4,2,2] as value,index}<i style={`height:${22+value*14}px`}><span>{['M','T','W','T','F'][index]}</span></i>{/each}</div><p>Your check-ins eased after short creative exercises. This is a personal pattern, not a diagnosis.</p></section>
         <section class="health-card" aria-labelledby="recent-health-heading">
           <div class="health-card-header">
@@ -315,6 +451,7 @@
   h2{margin:0}.state-card,.focus-card,.summary-card,.trend-card,.health-card,.profile-card,.settings-list,.session-list{border:1px solid var(--border);background:var(--surface);border-radius:22px}.state-card{padding:18px;display:flex;gap:20px;justify-content:space-between}.state-card h2{font-size:19px;margin-bottom:7px}.state-card p:last-child,.focus-card p,.trend-card p,.profile-card p,.archive-hero p{font-size:13px;line-height:1.55;color:var(--muted);margin:0}.signal{width:92px;flex:none;display:grid;place-items:center;text-align:center;color:#4f827b;font-size:10px;gap:5px}.focus-card{margin-top:14px;padding:21px;background:var(--coral);border:0;display:grid;grid-template-columns:1fr 110px;min-height:220px;overflow:hidden}.focus-copy{position:relative;z-index:2}.focus-card h2{font-size:23px;line-height:1.2;margin:5px 0 9px}.primary{min-height:52px;padding:0 20px;border:0;border-radius:16px;background:var(--sun);font-weight:700;cursor:pointer}.primary:disabled{cursor:default;opacity:.55}.focus-card .primary{margin-top:20px}.paper-motif{position:relative;min-height:130px}.paper-motif i,.paper-motif b{position:absolute;display:block;width:82px;height:72px;border-radius:18px;transform:rotate(8deg);background:var(--sun-soft);top:35px;left:0}.paper-motif i:nth-child(2){background:var(--teal);transform:rotate(-8deg);left:35px;top:20px}.paper-motif b{width:45px;height:45px;border-radius:50%;background:var(--sun);left:70px;top:63px}.section-title{display:flex;align-items:center;justify-content:space-between;margin:26px 0 10px}.section-title h2,.list-heading{font-size:17px}.section-title button{border:0;background:none;color:var(--muted);font-size:12px}.task-list,.session-list,.settings-list{overflow:hidden}.task-list article,.session-list article,.settings-list article{min-height:67px;padding:12px 15px;display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--border)}.task-list article:last-child,.session-list article:last-child,.settings-list article:last-child{border:0}.task-list div,.session-list div,.settings-list div{display:flex;flex:1;flex-direction:column;gap:3px}.task-list span,.session-list small,.settings-list small,.settings-list article>span{font-size:11px;color:var(--muted)}
   .summary-card{display:grid;grid-template-columns:repeat(3,1fr);padding:16px;margin-bottom:14px}.summary-card div{display:flex;flex-direction:column;gap:3px;padding:5px 10px;border-right:1px solid var(--border)}.summary-card div:last-child{border:0}.summary-card strong{font-size:24px}.summary-card span{font-size:10px;color:var(--muted)}.trend-card{padding:18px}.trend-card .section-title{margin:0 0 18px}.trend-card .section-title span{font-size:11px;color:var(--muted)}.bars{height:105px;display:flex;gap:13px;align-items:end;border-bottom:1px solid var(--border);margin-bottom:18px}.bars i{display:block;position:relative;width:28px;max-height:90px;border-radius:9px 9px 0 0;background:#c9ddb8}.bars i:nth-child(3){background:#efc5b5}.bars span{position:absolute;bottom:-17px;width:100%;text-align:center;font:10px/1 Manrope;color:var(--muted)}.list-heading{margin:24px 0 10px}.method-dot{width:34px;height:34px;border-radius:12px;background:var(--coral)}.method-dot.breathing{background:#c8dde8}
   .health-card{margin-top:14px;padding:18px}.health-card-header{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}.health-title{display:flex;align-items:center;gap:11px}.health-title .eyebrow{margin-bottom:4px}.health-title h2{font-size:18px}.health-icon{width:42px;height:42px;flex:none;border-radius:14px;display:grid;place-items:center;background:var(--coral);color:#844f43}.health-status{flex:none;padding:7px 9px;border-radius:999px;background:var(--cream);color:var(--muted);font-size:10px;font-weight:700}.health-status.active{background:var(--teal);color:#355f59}.health-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:18px}.health-grid article{min-width:0;padding:14px;border-radius:17px;background:#f7f1e7}.health-grid article.unavailable{background:#f5f2ec}.health-grid article>span{display:block;min-height:30px;font-size:11px;line-height:1.35;color:var(--muted)}.health-grid article>div{display:flex;align-items:baseline;gap:5px;margin-top:6px}.health-grid strong{font-size:25px;line-height:1}.health-grid small{font-size:10px;color:var(--muted)}.health-grid article>p{min-height:32px;margin:9px 0 0;font-size:10px;line-height:1.45;color:var(--muted)}.health-card-footer{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin-top:14px;padding-top:13px;border-top:1px solid var(--border)}.health-card-footer p{max-width:380px;margin:0;font-size:10px;line-height:1.45;color:var(--muted)}.health-card-footer span{flex:none;font-size:9px;line-height:1.4;color:var(--muted);text-align:right}.health-empty{min-height:132px;margin-top:18px;padding:22px;border-radius:18px;display:flex;flex-direction:column;align-items:flex-start;justify-content:center;background:#f7f1e7}.health-empty strong{font-size:14px}.health-empty p{margin:7px 0 0;font-size:12px;line-height:1.5;color:var(--muted)}.health-empty.loading{align-items:center;text-align:center}.loading-dot{width:22px;height:22px;margin-bottom:12px;border:3px solid #d8ccbd;border-top-color:#b26e54;border-radius:50%;animation:health-spin .8s linear infinite}.health-actions{display:flex;justify-content:flex-end;margin-top:13px}.secondary{min-height:44px;padding:0 15px;border:1px solid var(--border);border-radius:14px;background:var(--surface);font-size:12px;font-weight:700;cursor:pointer}.secondary:active,.settings-row:active,.text-button:active{opacity:.66}.sr-status{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}@keyframes health-spin{to{transform:rotate(360deg)}}
+  .watch-live-card,.watch-checkins{margin-top:14px;padding:18px;border:1px solid #c8ddd5;border-radius:22px;background:var(--teal)}.watch-live-header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.watch-live-header h2{font-size:18px}.watch-live-status{display:flex;align-items:center;gap:6px;flex:none;padding:7px 9px;border-radius:999px;background:#fffdf9a8;color:var(--muted);font-size:10px;font-weight:700}.watch-live-status i{width:7px;height:7px;border-radius:50%;background:#a8aaa5}.watch-live-status.active{color:#355f59}.watch-live-status.active i{background:#3f9187;box-shadow:0 0 0 4px #7fbbb233}.watch-live-grid{display:grid;grid-template-columns:1.25fr 1fr 1fr;gap:8px;margin-top:16px}.watch-live-grid>div{min-height:92px;padding:13px;border-radius:17px;background:#fffdf9b8;display:flex;flex-direction:column;justify-content:center}.watch-live-grid strong{font-size:15px;line-height:1.2}.watch-live-grid span,.watch-live-grid small{margin-top:5px;font-size:10px;line-height:1.35;color:var(--muted)}.watch-live-grid .watch-heart strong{font-size:32px;line-height:1}.watch-live-empty{min-height:92px;margin-top:15px;padding:17px;border-radius:17px;background:#fffdf9a8;display:flex;align-items:center;gap:13px;color:#4f827b}.watch-live-empty p{margin:0;color:var(--muted);font-size:12px;line-height:1.5}.watch-live-note{margin:13px 0 0;font-size:10px;line-height:1.45;color:#566b66}.watch-checkins{margin:0 0 14px;background:var(--surface);border-color:var(--border)}.watch-checkins .section-title{margin:0 0 12px}.watch-checkins .section-title>div{display:block}.watch-checkins .section-title>span{min-width:30px;height:30px;border-radius:15px;background:var(--teal);display:grid;place-items:center;font-size:11px;font-weight:700}.watch-checkin-list{overflow:hidden;border:1px solid var(--border);border-radius:17px}.watch-checkin-list article{min-height:62px;padding:10px 13px;display:flex;align-items:center;gap:13px;border-bottom:1px solid var(--border)}.watch-checkin-list article:last-child{border:0}.watch-checkin-list article>strong{width:38px;height:38px;border-radius:14px;background:var(--sun-soft);display:grid;place-items:center;font-size:19px}.watch-checkin-list article>div{display:flex;flex-direction:column;gap:3px}.watch-checkin-list span{font-size:12px;font-weight:700}.watch-checkin-list small{font-size:10px;color:var(--muted)}
   .featured{width:100%;min-height:126px;border:0;border-radius:26px;background:var(--coral);padding:18px;display:flex;text-align:left;justify-content:space-between;align-items:center;cursor:pointer}.featured h2{font-size:18px;margin:3px 0 5px}.featured span{font-size:11px;color:var(--muted)}.digital-lines{position:relative;width:90px;height:70px}.digital-lines i{position:absolute;width:47px;height:35px;border:2px solid #2f302d;top:18px;left:5px}.digital-lines i:nth-child(2){left:26px;transform:rotate(10deg)}.digital-lines i:nth-child(3){left:47px;transform:rotate(-7deg)}.filters{display:flex;gap:8px;margin:12px 0 14px}.filters button{min-height:44px;flex:1;border:1px solid var(--border);border-radius:999px;background:var(--surface);font-size:13px}.filters button.active{background:var(--sun-soft);border-color:var(--sun)}.method-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.method-grid button{min-height:156px;border:0;border-radius:24px;padding:16px;text-align:left;display:flex;flex-direction:column;cursor:pointer}.method-grid .breathing{background:#c8dde8}.method-grid .mindfulness{background:#ddd6ee}.method-grid .sensory{background:#cfdfc0}.method-grid .digital{background:var(--coral)}.method-symbol{height:57px;display:flex;align-items:center;font:24px Georgia;letter-spacing:.15em}.method-grid strong{font-size:14px;margin-top:auto}.method-grid small{font-size:11px;color:var(--muted);margin-top:7px}.notice{font-size:12px;line-height:1.5;color:var(--muted);margin:14px 2px}
   .archive-hero{position:relative;padding:20px 100px 20px 20px;border-radius:24px;background:var(--teal);min-height:128px}.archive-hero h2{font-size:20px;margin-bottom:8px}.archive-count{position:absolute;right:20px;top:22px;display:flex;flex-direction:column;text-align:center}.archive-count strong{font-size:30px}.archive-count span{font-size:10px;color:var(--muted)}
   .collection-section{margin-top:30px}.collection-heading{display:flex;align-items:end;justify-content:space-between;margin-bottom:12px}.collection-heading .eyebrow{margin-bottom:5px}.collection-heading h2{font-size:20px}.collection-heading>span{min-width:36px;height:36px;padding:0 10px;border-radius:18px;background:var(--cream);display:grid;place-items:center;font-size:12px;font-weight:700;color:var(--muted)}.collection-empty{margin:0;padding:20px;border:1px dashed #cfc5b6;border-radius:18px;color:var(--muted);font-size:12px;line-height:1.5;background:rgba(255,253,249,.48)}
@@ -322,7 +459,7 @@
   .artifact-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.artifact{min-width:0;border:1px solid var(--border);border-radius:20px;overflow:hidden;background:var(--surface);position:relative}.artifact>img{display:block;width:100%;height:130px;object-fit:cover}.artifact>img.sticker-image{object-fit:contain;padding:12px;background:#f5eee3}.artifact>div{padding:13px;display:flex;flex-direction:column;gap:4px}.tape-grid{grid-template-columns:1fr}.tape-artifact>img{height:96px;padding:18px 16px;object-fit:contain;background:#f5eee3}
   .artifact-delete{position:absolute;z-index:2;right:8px;top:8px;width:44px;height:44px;padding:0;border:0;border-radius:50%;display:grid;place-items:center;background:#fffdf9ed;color:#934235;box-shadow:0 2px 8px #2f302d20;cursor:pointer}.artifact-delete svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}.artifact-delete:active{opacity:.68}.empty{padding:30px;text-align:center}.empty .paper-motif{width:130px;margin:auto}.empty h2{font-size:19px}.empty p{font-size:13px;line-height:1.5;color:var(--muted)}.profile-card{padding:19px}.profile-card h2{font-size:19px;margin-bottom:4px}.setting-icon{width:24px;text-align:center;color:#6b7e77}.status-dot{display:block;width:10px!important;height:10px;border-radius:50%;background:#4f9e95}.settings-row{width:100%;min-height:68px;padding:12px 15px;border:0;background:transparent;display:flex;align-items:center;gap:12px;text-align:left;cursor:pointer}.settings-row>div{display:flex;flex:1;flex-direction:column;gap:3px}.settings-row small{font-size:11px;color:var(--muted)}.row-end{display:flex;align-items:center;gap:10px;color:var(--muted)}.health-permission-card{scroll-margin-block:calc(22px + env(safe-area-inset-top)) 120px;margin-top:12px;padding:20px;border-radius:22px;background:var(--teal);border:1px solid #c8ddd5}.permission-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.permission-heading h2{font-size:20px}.text-button{min-height:44px;padding:0 10px;border:0;background:transparent;color:#466b64;font-size:12px;font-weight:700;cursor:pointer}.health-permission-card>p{margin:14px 0 0;font-size:13px;line-height:1.55;color:#52645f}.health-permission-card ul{display:grid;grid-template-columns:1fr 1fr;gap:8px 14px;margin:17px 0;padding:0;list-style:none}.health-permission-card li{position:relative;padding-left:16px;font-size:12px;line-height:1.45}.health-permission-card li::before{content:'';position:absolute;left:0;top:.42em;width:7px;height:7px;border-radius:50%;background:#efb23e}.privacy-note{display:flex;gap:11px;padding:14px;border-radius:16px;background:#fffdf9b8}.privacy-note :global(svg){flex:none;color:#8a5548}.privacy-note p{display:flex;flex-direction:column;gap:4px;margin:0}.privacy-note strong{font-size:12px}.privacy-note span{font-size:11px;line-height:1.45;color:var(--muted)}.health-permission-card .permission-status{min-height:37px;margin-top:13px;font-size:11px}.permission-action{width:100%;margin-top:10px}
   .bottom-nav{position:fixed;z-index:20;left:max(24px,env(safe-area-inset-left));right:max(24px,env(safe-area-inset-right));bottom:max(16px,env(safe-area-inset-bottom));max-width:640px;margin:auto;height:72px;padding:10px 12px;display:flex;align-items:center;justify-content:space-between;border-radius:24px;background:rgba(241,231,214,.96);box-shadow:0 8px 24px rgba(45,40,35,.1);backdrop-filter:blur(16px)}.bottom-nav button{width:58px;height:52px;border:0;border-radius:18px;background:none;color:#72766f;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;cursor:pointer}.bottom-nav button.active{background:var(--sun-soft);color:#2f302d}.bottom-nav span{font-size:9px}.desktop-rail{display:none}
-  @media(max-width:374px){.page{padding-inline:18px}.focus-card{grid-template-columns:1fr 80px}.method-grid{gap:12px}.method-grid button{min-height:145px}.summary-card span{font-size:9px}.bottom-nav{left:12px;right:12px}.bottom-nav button{width:52px}.artifact-grid,.journal-grid,.health-grid{grid-template-columns:1fr}.health-card-header{align-items:flex-start}.health-status{max-width:92px;text-align:center}.health-permission-card ul{grid-template-columns:1fr}}
+  @media(max-width:374px){.page{padding-inline:18px}.focus-card{grid-template-columns:1fr 80px}.method-grid{gap:12px}.method-grid button{min-height:145px}.summary-card span{font-size:9px}.bottom-nav{left:12px;right:12px}.bottom-nav button{width:52px}.artifact-grid,.journal-grid,.health-grid,.watch-live-grid{grid-template-columns:1fr}.watch-live-grid>div{min-height:72px}.health-card-header{align-items:flex-start}.health-status{max-width:92px;text-align:center}.health-permission-card ul{grid-template-columns:1fr}}
   @media(min-width:900px){.app-shell{display:grid;grid-template-columns:230px 1fr}.desktop-rail{display:flex;height:100dvh;padding:calc(32px + env(safe-area-inset-top)) 20px calc(24px + env(safe-area-inset-bottom));flex-direction:column;gap:8px;border-right:1px solid var(--border);background:#f3ebde}.desktop-rail strong{font-size:18px;letter-spacing:.12em;margin:0 10px 30px}.desktop-rail strong span{color:#b9785f}.desktop-rail button{height:48px;border:0;border-radius:15px;background:none;display:flex;align-items:center;gap:12px;padding:0 15px;color:var(--muted)}.desktop-rail button.active{background:var(--sun-soft);color:#2f302d}.app-scroll{padding-bottom:24px}.page{width:min(100%,820px);padding:48px}.bottom-nav{display:none}.method-grid{grid-template-columns:repeat(4,1fr)}.health-grid{grid-template-columns:repeat(4,1fr)}.focus-card{grid-template-columns:1fr 220px}}
   @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;animation-duration:.01ms!important;transition-duration:.01ms!important}}
 </style>

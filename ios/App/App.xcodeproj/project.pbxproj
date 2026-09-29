@@ -14,12 +14,41 @@
 		9A0100012FF0000000000001 /* GroundingBridgeViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A0200012FF0000000000001 /* GroundingBridgeViewController.swift */; };
 		9A0100022FF0000000000002 /* NativeVisionSegmentPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A0200022FF0000000000002 /* NativeVisionSegmentPlugin.swift */; };
 		9A0100032FF0000000000003 /* HealthTrendPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A0200032FF0000000000003 /* HealthTrendPlugin.swift */; };
+		B00100012FF1000000000001 /* WatchSignalPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00200012FF1000000000001 /* WatchSignalPlugin.swift */; };
+		B00100022FF1000000000002 /* HeartRateWatchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00200022FF1000000000002 /* HeartRateWatchApp.swift */; };
+		B00100032FF1000000000003 /* HeartRateWorkoutManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00200032FF1000000000003 /* HeartRateWorkoutManager.swift */; };
+		B00100042FF1000000000004 /* WatchContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00200042FF1000000000004 /* WatchContentView.swift */; };
+		B00100052FF1000000000005 /* Grounding Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = B00200072FF1000000000007 /* Grounding Watch App.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		504EC30D1FED79650016851F /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC30B1FED79650016851F /* Main.storyboard */; };
 		504EC30F1FED79650016851F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 504EC30E1FED79650016851F /* Assets.xcassets */; };
 		504EC3121FED79650016851F /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC3101FED79650016851F /* LaunchScreen.storyboard */; };
 		50B271D11FEDC1A000F3C39B /* public in Resources */ = {isa = PBXBuildFile; fileRef = 50B271D01FEDC1A000F3C39B /* public */; };
 		9582B6832FE993A70072D4E8 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9582B6822FE993A50072D4E8 /* SceneDelegate.swift */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		B00300012FF1000000000001 = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 504EC2FC1FED79650016851F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = B00600012FF1000000000001;
+			remoteInfo = "Grounding Watch App";
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		B00400012FF1000000000001 /* Embed Watch Content */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(CONTENTS_FOLDER_PATH)/Watch";
+			dstSubfolderSpec = 16;
+			files = (
+				B00100052FF1000000000005 /* Grounding Watch App.app in Embed Watch Content */,
+			);
+			name = "Embed Watch Content";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		2FAD9762203C412B000D30F8 /* config.xml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = config.xml; sourceTree = "<group>"; };
@@ -34,6 +63,13 @@
 		9A0200022FF0000000000002 /* NativeVisionSegmentPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeVisionSegmentPlugin.swift; sourceTree = "<group>"; };
 		9A0200032FF0000000000003 /* HealthTrendPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthTrendPlugin.swift; sourceTree = "<group>"; };
 		9A0200042FF0000000000004 /* App.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = App.entitlements; sourceTree = "<group>"; };
+		B00200012FF1000000000001 /* WatchSignalPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchSignalPlugin.swift; sourceTree = "<group>"; };
+		B00200022FF1000000000002 /* HeartRateWatchApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeartRateWatchApp.swift; sourceTree = "<group>"; };
+		B00200032FF1000000000003 /* HeartRateWorkoutManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeartRateWorkoutManager.swift; sourceTree = "<group>"; };
+		B00200042FF1000000000004 /* WatchContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchContentView.swift; sourceTree = "<group>"; };
+		B00200052FF1000000000005 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		B00200062FF1000000000006 /* CalmSignalWatch.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = CalmSignalWatch.entitlements; sourceTree = "<group>"; };
+		B00200072FF1000000000007 /* Grounding Watch App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Grounding Watch App.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		50B271D01FEDC1A000F3C39B /* public */ = {isa = PBXFileReference; lastKnownFileType = folder; path = public; sourceTree = "<group>"; };
 		9582B6822FE993A50072D4E8 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
 		958DCC722DB07C7200EA8C5F /* debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = debug.xcconfig; path = ../debug.xcconfig; sourceTree = SOURCE_ROOT; };
@@ -48,6 +84,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		B00400032FF1000000000003 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -56,6 +99,7 @@
 			children = (
 				958DCC722DB07C7200EA8C5F /* debug.xcconfig */,
 				504EC3061FED79650016851F /* App */,
+				B00500012FF1000000000001 /* WatchApp */,
 				504EC3051FED79650016851F /* Products */,
 			);
 			sourceTree = "<group>";
@@ -64,6 +108,7 @@
 			isa = PBXGroup;
 			children = (
 				504EC3041FED79650016851F /* App.app */,
+				B00200072FF1000000000007 /* Grounding Watch App.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -74,6 +119,7 @@
 				9A0200012FF0000000000001 /* GroundingBridgeViewController.swift */,
 				9A0200022FF0000000000002 /* NativeVisionSegmentPlugin.swift */,
 				9A0200032FF0000000000003 /* HealthTrendPlugin.swift */,
+				B00200012FF1000000000001 /* WatchSignalPlugin.swift */,
 				9A0200042FF0000000000004 /* App.entitlements */,
 				9582B6822FE993A50072D4E8 /* SceneDelegate.swift */,
 				50379B222058CBB4000EE86E /* capacitor.config.json */,
@@ -88,6 +134,18 @@
 			path = App;
 			sourceTree = "<group>";
 		};
+		B00500012FF1000000000001 /* WatchApp */ = {
+			isa = PBXGroup;
+			children = (
+				B00200022FF1000000000002 /* HeartRateWatchApp.swift */,
+				B00200032FF1000000000003 /* HeartRateWorkoutManager.swift */,
+				B00200042FF1000000000004 /* WatchContentView.swift */,
+				B00200052FF1000000000005 /* Info.plist */,
+				B00200062FF1000000000006 /* CalmSignalWatch.entitlements */,
+			);
+			path = WatchApp;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -98,10 +156,12 @@
 				504EC3001FED79650016851F /* Sources */,
 				504EC3011FED79650016851F /* Frameworks */,
 				504EC3021FED79650016851F /* Resources */,
+				B00400012FF1000000000001 /* Embed Watch Content */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				B00900012FF1000000000001 /* PBXTargetDependency */,
 			);
 			name = App;
 			packageProductDependencies = (
@@ -109,6 +169,23 @@
 			);
 			productName = App;
 			productReference = 504EC3041FED79650016851F /* App.app */;
+			productType = "com.apple.product-type.application";
+		};
+		B00600012FF1000000000001 /* Grounding Watch App */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B00800012FF1000000000001 /* Build configuration list for PBXNativeTarget "Grounding Watch App" */;
+			buildPhases = (
+				B00400022FF1000000000002 /* Sources */,
+				B00400032FF1000000000003 /* Frameworks */,
+				B00400042FF1000000000004 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "Grounding Watch App";
+			productName = "Grounding Watch App";
+			productReference = B00200072FF1000000000007 /* Grounding Watch App.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -124,6 +201,10 @@
 					504EC3031FED79650016851F = {
 						CreatedOnToolsVersion = 9.2;
 						LastSwiftMigration = 1100;
+						ProvisioningStyle = Automatic;
+					};
+					B00600012FF1000000000001 = {
+						CreatedOnToolsVersion = 26.0;
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -145,6 +226,7 @@
 			projectRoot = "";
 			targets = (
 				504EC3031FED79650016851F /* App */,
+				B00600012FF1000000000001 /* Grounding Watch App */,
 			);
 		};
 /* End PBXProject section */
@@ -163,6 +245,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		B00400042FF1000000000004 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -174,11 +263,26 @@
 				9A0100012FF0000000000001 /* GroundingBridgeViewController.swift in Sources */,
 				9A0100022FF0000000000002 /* NativeVisionSegmentPlugin.swift in Sources */,
 				9A0100032FF0000000000003 /* HealthTrendPlugin.swift in Sources */,
+				B00100012FF1000000000001 /* WatchSignalPlugin.swift in Sources */,
 				9582B6832FE993A70072D4E8 /* SceneDelegate.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		B00400022FF1000000000002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B00100022FF1000000000002 /* HeartRateWatchApp.swift in Sources */,
+				B00100032FF1000000000003 /* HeartRateWorkoutManager.swift in Sources */,
+				B00100042FF1000000000004 /* WatchContentView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		B00900012FF1000000000001 /* PBXTargetDependency */ = {isa = PBXTargetDependency; target = B00600012FF1000000000001 /* Grounding Watch App */; targetProxy = B00300012FF1000000000001; };
+/* End PBXTargetDependency section */
 
 /* Begin PBXVariantGroup section */
 		504EC30B1FED79650016851F /* Main.storyboard */ = {
@@ -367,6 +471,51 @@
 			};
 			name = Release;
 		};
+		B00700012FF1000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = WatchApp/CalmSignalWatch.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 8GNZ7PCKP2;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = WatchApp/Info.plist;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.yuxingzhang.grounding.watchkitapp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Debug;
+		};
+		B00700022FF1000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = WatchApp/CalmSignalWatch.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 8GNZ7PCKP2;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = WatchApp/Info.plist;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.yuxingzhang.grounding.watchkitapp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -384,6 +533,15 @@
 			buildConfigurations = (
 				504EC3171FED79650016851F /* Debug */,
 				504EC3181FED79650016851F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		B00800012FF1000000000001 /* Build configuration list for PBXNativeTarget "Grounding Watch App" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B00700012FF1000000000001 /* Debug */,
+				B00700022FF1000000000002 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

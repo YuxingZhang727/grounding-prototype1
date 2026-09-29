@@ -79,6 +79,24 @@ npm run cap:android
 
 The iOS command requires Xcode; the Android command requires Android Studio. Whenever the web code changes, run `npm run cap:sync` before building the native app again.
 
+### Apple Watch
+
+The Apple Watch app is part of the existing Capacitor iOS project, not a second standalone iPhone app:
+
+```text
+ios/App/App.xcodeproj
+├── App                    # Capacitor iPhone/iPad target
+└── Grounding Watch App    # Native SwiftUI watchOS target
+```
+
+The Watch sources live in `ios/App/WatchApp`. They collect live heart rate during a user-started Mind & Body session, estimate wrist-motion intensity, and record a 0–10 momentary anxiety check-in. The Watch target is embedded in the Capacitor `App` target and uses the companion bundle identifier `com.yuxingzhang.grounding`.
+
+`WatchSignalPlugin.swift` receives WatchConnectivity messages in the iPhone target. The web layer subscribes through `src/lib/watch-signal.ts`: Home shows the current BPM, session baseline difference, wrist motion, elapsed time, and connection state; History shows the momentary anxiety check-ins recorded on Watch.
+
+The Watch interface is intentionally a compact instrument rather than a separate content app. Its main screen stays on live collection. “记录焦虑” opens a temporary Crown-controlled 0–10 input sheet; saving or cancelling returns directly to the live signal screen. While a measurement is active, Watch sends a fresh snapshot to iPhone once per second.
+
+`npm run cap:sync` updates Capacitor web assets and packages but does not remove the custom Watch target. Use the `App` scheme with a paired physical iPhone and Apple Watch to test HealthKit, wrist-down collection, and WatchConnectivity.
+
 ## Checks
 
 ```sh

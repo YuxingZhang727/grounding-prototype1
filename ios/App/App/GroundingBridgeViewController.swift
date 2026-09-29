@@ -8,5 +8,6 @@ class GroundingBridgeViewController: CAPBridgeViewController {
         super.capacitorDidLoad()
         bridge?.registerPluginInstance(NativeVisionSegmentPlugin())
         bridge?.registerPluginInstance(HealthTrendPlugin())
+        bridge?.registerPluginInstance(WatchSignalPlugin())
     }
 }
