@@ -48,7 +48,7 @@ private struct LiveSignalView: View {
                     Image(systemName: manager.isPhoneReachable ? "iphone.radiowaves.left.and.right" : "iphone.slash")
                         .font(.caption2)
                         .foregroundStyle(manager.isPhoneReachable ? .mint : .secondary)
-                        .accessibilityLabel(manager.isPhoneReachable ? "手机实时连接正常" : "等待手机应用连接")
+                        .accessibilityLabel(manager.isPhoneReachable ? "iPhone connection active" : "Waiting for iPhone app")
                 }
 
                 VStack(spacing: 0) {
@@ -63,19 +63,19 @@ private struct LiveSignalView: View {
                     }
 
                     if let delta = manager.deltaBPM {
-                        Text(String(format: "%+.0f 相对本次基线", delta))
+                        Text(String(format: "%+.0f from baseline", delta))
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                             .monospacedDigit()
                     } else {
-                        Text(manager.isRunning ? "保持相对静止以建立基线" : "开始后读取实时心率")
+                        Text(manager.isRunning ? "Keep still to build baseline" : "Start to read live heart rate")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
                 }
                 .accessibilityElement(children: .combine)
-                .accessibilityLabel("实时心率")
-                .accessibilityValue(manager.bpm.map { "每分钟 \(Int($0.rounded())) 次" } ?? "暂无数据")
+                .accessibilityLabel("Live heart rate")
+                .accessibilityValue(manager.bpm.map { "\(Int($0.rounded())) beats per minute" } ?? "No reading")
 
                 HStack(spacing: 12) {
                     Label(durationText, systemImage: "timer")
@@ -92,7 +92,7 @@ private struct LiveSignalView: View {
                     }
                 } label: {
                     Label(
-                        manager.isRunning ? "结束测量" : "开始测量",
+                        manager.isRunning ? "Stop measuring" : "Start measuring",
                         systemImage: manager.isRunning ? "stop.fill" : "play.fill"
                     )
                     .frame(maxWidth: .infinity, minHeight: 32)
@@ -100,14 +100,14 @@ private struct LiveSignalView: View {
                 .buttonStyle(.borderedProminent)
                 .tint(manager.isRunning ? .red : .mint)
                 .disabled(manager.signalState == .requestingAccess)
-                .accessibilityHint(manager.isRunning ? "结束本次实时信号采集" : "请求权限并开始采集实时信号")
+                .accessibilityHint(manager.isRunning ? "Ends live signal collection" : "Requests permission and starts live signal collection")
 
                 Button(action: openCheckIn) {
-                    Label("记录焦虑", systemImage: "square.and.pencil")
+                    Label("Record check-in", systemImage: "square.and.pencil")
                         .frame(maxWidth: .infinity, minHeight: 30)
                 }
                 .buttonStyle(.bordered)
-                .accessibilityHint("临时打开焦虑自评，完成后返回实时心率")
+                .accessibilityHint("Opens a brief self-report and returns to live heart rate when complete")
             }
             .padding(.horizontal, 8)
         }
@@ -120,9 +120,9 @@ private struct LiveSignalView: View {
 
     private var motionText: String {
         switch manager.motionIntensity {
-        case ..<0.06: return "静止"
-        case ..<0.16: return "轻微"
-        default: return "活动中"
+        case ..<0.06: return "Still"
+        case ..<0.16: return "Light motion"
+        default: return "Moving"
         }
     }
 }
@@ -133,7 +133,7 @@ private struct CheckInView: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            Text("此刻有多焦虑？")
+            Text("How anxious do you feel now?")
                 .font(.headline)
                 .multilineTextAlignment(.center)
 
@@ -143,7 +143,7 @@ private struct CheckInView: View {
                 .foregroundStyle(ratingColor)
                 .contentTransition(.numericText())
 
-            Text("转动表冠 · 0 不焦虑，10 非常焦虑")
+            Text("Turn the crown · 0 not anxious, 10 very anxious")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -157,14 +157,14 @@ private struct CheckInView: View {
                         .frame(maxWidth: .infinity, minHeight: 30)
                 }
                 .buttonStyle(.bordered)
-                .accessibilityLabel("取消")
+                .accessibilityLabel("Cancel")
 
                 Button {
                     manager.saveCheckIn()
                     WKInterfaceDevice.current().play(.success)
                     dismiss()
                 } label: {
-                    Label("记录", systemImage: "checkmark")
+                    Label("Save", systemImage: "checkmark")
                         .frame(maxWidth: .infinity, minHeight: 30)
                 }
                 .buttonStyle(.borderedProminent)
@@ -183,7 +183,7 @@ private struct CheckInView: View {
             isHapticFeedbackEnabled: true
         )
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("当下焦虑自评")
+        .accessibilityLabel("Current anxiety self-report")
     }
 
     private var ratingColor: Color {

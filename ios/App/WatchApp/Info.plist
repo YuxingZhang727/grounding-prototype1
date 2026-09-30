@@ -21,11 +21,11 @@
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>NSHealthShareUsageDescription</key>
-	<string>读取实时心率，用于显示身体信号变化。</string>
+	<string>Reads live heart rate to show changes in body signals.</string>
 	<key>NSHealthUpdateUsageDescription</key>
-	<string>启动一段由用户控制的正念身体测量会话。</string>
+	<string>Starts a user-controlled mindful body measurement session.</string>
 	<key>NSMotionUsageDescription</key>
-	<string>读取手腕运动，用来区分活动引起的心率变化。</string>
+	<string>Reads wrist motion to distinguish activity-related heart-rate changes.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>workout-processing</string>

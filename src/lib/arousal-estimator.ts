@@ -61,17 +61,12 @@ function boundedContribution(value: number | null | undefined, bands: [number, n
  */
 export function estimateArousal(
   live: WatchSignalSnapshot,
-  trends: TrendsPayload | null,
-  now = Date.now()
+  trends: TrendsPayload | null
 ): ArousalEstimate {
-  const timestamp = live.timestamp ? new Date(live.timestamp).getTime() : Number.NaN;
-  const age = now - timestamp;
-  const isFresh = Number.isFinite(timestamp) && age >= 0 && age < 15_000;
-  // WatchConnectivity can pause briefly even while a session is running. Keep
-  // the last valid estimate for up to five minutes and expose freshness as
-  // confidence/status instead of clearing the whole UI after 15 seconds.
-  const isRetainable = Number.isFinite(timestamp) && age >= 0 && age < 5 * 60_000;
-  const hasLiveHR = live.isRunning === true && isRetainable && typeof live.bpm === 'number';
+  // WatchConnectivity delivery is event-driven and may be irregular. A valid
+  // reading remains the current session reading until the Watch explicitly
+  // sends a newer snapshot or reports that the session has stopped.
+  const hasLiveHR = live.isRunning === true && typeof live.bpm === 'number';
 
   if (!hasLiveHR) {
     return {
@@ -172,7 +167,7 @@ export function estimateArousal(
 
   score = Math.max(0, Math.min(100, Math.round(score)));
   const level: ArousalLevel = score >= 50 ? 'elevated' : score >= 25 ? 'mild' : 'settled';
-  const confidence: EstimateConfidence = !isFresh || moving
+  const confidence: EstimateConfidence = moving
     ? 'low'
     : evidenceCount >= 3 && typeof live.baselineBPM === 'number'
       ? 'high'
@@ -189,9 +184,7 @@ export function estimateArousal(
       : level === 'mild'
         ? 'Slightly more activated than usual'
         : 'Body signals are near your usual range',
-    summary: !isFresh
-      ? 'Holding the last valid estimate while waiting for the next Watch update.'
-      : moving
+    summary: moving
       ? 'The signal is being interpreted cautiously because movement can raise heart rate.'
       : level === 'elevated'
         ? 'Several current or recent signals are away from your personal baseline.'

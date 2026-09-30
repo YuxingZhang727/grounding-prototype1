@@ -24,12 +24,12 @@ final class HeartRateWorkoutManager: NSObject, ObservableObject {
 
         var title: String {
             switch self {
-            case .ready: return "准备开始"
-            case .requestingAccess: return "正在请求权限"
-            case .calibrating: return "建立本次基线"
-            case .typical: return "接近本次基线"
-            case .elevated: return "心率高于本次基线"
-            case .moving: return "检测到活动"
+            case .ready: return "Ready to start"
+            case .requestingAccess: return "Requesting access"
+            case .calibrating: return "Building baseline"
+            case .typical: return "Near session baseline"
+            case .elevated: return "Above session baseline"
+            case .moving: return "Movement detected"
             case .unavailable(let message): return message
             }
         }
@@ -80,7 +80,7 @@ final class HeartRateWorkoutManager: NSObject, ObservableObject {
         guard !isRunning else { return }
         guard HKHealthStore.isHealthDataAvailable(),
               let heartRate = HKObjectType.quantityType(forIdentifier: .heartRate) else {
-            signalState = .unavailable("此设备无法读取健康数据")
+            signalState = .unavailable("Health data is unavailable")
             return
         }
 
@@ -92,7 +92,7 @@ final class HeartRateWorkoutManager: NSObject, ObservableObject {
             )
             try startWorkout()
         } catch {
-            signalState = .unavailable("需要健康数据权限")
+            signalState = .unavailable("Health access is required")
         }
     }
 
@@ -120,11 +120,11 @@ final class HeartRateWorkoutManager: NSObject, ObservableObject {
         let start = Date()
         startedAt = start
         session.startActivity(with: start)
-        builder.beginCollection(withStart: start) { [weak self] success, error in
+        builder.beginCollection(withStart: start) { [weak self] success, _ in
             Task { @MainActor in
                 guard let self else { return }
                 guard success else {
-                    self.signalState = .unavailable(error?.localizedDescription ?? "无法开始测量")
+                    self.signalState = .unavailable("Measurement could not start")
                     return
                 }
                 self.isRunning = true
@@ -240,6 +240,8 @@ final class HeartRateWorkoutManager: NSObject, ObservableObject {
         connectivity.sendSnapshot(
             bpm: bpm,
             baselineBPM: baselineBPM,
+            baselineSampleCount: min(baselineSamples.count, 5),
+            baselineTarget: 5,
             motionIntensity: motionIntensity,
             elapsedTime: elapsedTime,
             isRunning: isRunning,
@@ -286,7 +288,7 @@ extension HeartRateWorkoutManager: HKWorkoutSessionDelegate {
     nonisolated func workoutSession(_ workoutSession: HKWorkoutSession, didFailWithError error: Error) {
         Task { @MainActor [weak self] in
             self?.isRunning = false
-            self?.signalState = .unavailable("测量已中断")
+            self?.signalState = .unavailable("Measurement was interrupted")
         }
     }
 }
@@ -308,6 +310,8 @@ private final class WatchSignalSender: NSObject, WCSessionDelegate {
     func sendSnapshot(
         bpm: Double?,
         baselineBPM: Double?,
+        baselineSampleCount: Int,
+        baselineTarget: Int,
         motionIntensity: Double,
         elapsedTime: TimeInterval,
         isRunning: Bool,
@@ -316,6 +320,8 @@ private final class WatchSignalSender: NSObject, WCSessionDelegate {
         var message: [String: Any] = [
             "kind": "snapshot",
             "provider": "apple_watch",
+            "baselineSampleCount": baselineSampleCount,
+            "baselineTarget": baselineTarget,
             "motionIntensity": motionIntensity,
             "elapsedTime": elapsedTime,
             "isRunning": isRunning,

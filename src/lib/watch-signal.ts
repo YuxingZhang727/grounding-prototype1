@@ -14,6 +14,8 @@ export type WatchSignalSnapshot = {
   provider?: 'apple_watch';
   bpm?: number;
   baselineBPM?: number;
+  baselineSampleCount?: number;
+  baselineTarget?: number;
   motionIntensity?: number;
   elapsedTime?: number;
   isRunning?: boolean;
