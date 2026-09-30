@@ -40,6 +40,7 @@ final class HeartRateWorkoutManager: NSObject, ObservableObject {
     @Published private(set) var motionIntensity = 0.0
     @Published private(set) var elapsedTime: TimeInterval = 0
     @Published private(set) var isRunning = false
+    @Published private(set) var isPhoneReachable = false
     @Published private(set) var signalState: SignalState = .ready
     @Published private(set) var checkIns: [AnxietyCheckIn] = []
     @Published var draftRating = 5.0
@@ -62,6 +63,12 @@ final class HeartRateWorkoutManager: NSObject, ObservableObject {
     override init() {
         super.init()
         checkIns = Self.loadCheckIns()
+        connectivity.onReachabilityChanged = { [weak self] reachable in
+            Task { @MainActor [weak self] in
+                self?.isPhoneReachable = reachable
+            }
+        }
+        connectivity.activate()
     }
 
     deinit {
@@ -285,12 +292,15 @@ extension HeartRateWorkoutManager: HKWorkoutSessionDelegate {
 }
 
 private final class WatchSignalSender: NSObject, WCSessionDelegate {
-    override init() {
-        super.init()
-        if WCSession.isSupported() {
-            WCSession.default.delegate = self
-            WCSession.default.activate()
+    var onReachabilityChanged: ((Bool) -> Void)?
+
+    func activate() {
+        guard WCSession.isSupported() else {
+            onReachabilityChanged?(false)
+            return
         }
+        WCSession.default.delegate = self
+        WCSession.default.activate()
     }
 
     func sendSnapshot(
@@ -345,5 +355,11 @@ private final class WatchSignalSender: NSObject, WCSessionDelegate {
         _ session: WCSession,
         activationDidCompleteWith activationState: WCSessionActivationState,
         error: Error?
-    ) {}
+    ) {
+        onReachabilityChanged?(activationState == .activated && session.isReachable)
+    }
+
+    func sessionReachabilityDidChange(_ session: WCSession) {
+        onReachabilityChanged?(session.isReachable)
+    }
 }

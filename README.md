@@ -95,6 +95,10 @@ The Watch sources live in `ios/App/WatchApp`. They collect live heart rate durin
 
 The Watch interface is intentionally a compact instrument rather than a separate content app. Its main screen stays on live collection. “记录焦虑” opens a temporary Crown-controlled 0–10 input sheet; saving or cancelling returns directly to the live signal screen. While a measurement is active, Watch sends a fresh snapshot to iPhone once per second.
 
+The first arousal-estimation prototype lives in `src/lib/arousal-estimator.ts`. It combines fresh Watch heart rate with the in-session heart-rate baseline and, when available, the user's 14-day HealthKit baselines for resting heart rate, HRV, and respiratory rate. Wrist movement discounts the live-heart-rate contribution because activity can raise BPM independently of anxiety. The output is an explainable 0–100 prototype index with a confidence label, never a diagnosis or a claim that anxiety was detected.
+
+The intervention policy maps that estimate to one of four choices: Breathing, Mindfulness, Standard Grounding, or Creative Digital Grounding. It also returns an intensity, card prominence, and a suggested time before checking again. These thresholds are intentionally conservative product heuristics for testing the technical pipeline; they are not clinically validated and should be calibrated with user research and appropriate clinical review before any health-facing release.
+
 `npm run cap:sync` updates Capacitor web assets and packages but does not remove the custom Watch target. Use the `App` scheme with a paired physical iPhone and Apple Watch to test HealthKit, wrist-down collection, and WatchConnectivity.
 
 ## Checks

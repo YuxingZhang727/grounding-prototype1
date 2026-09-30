@@ -6,6 +6,7 @@
   import GroundingSteps from '$lib/GroundingSteps.svelte';
   import { deleteSticker, loadStickers, saveJournal, saveSticker, type SavedSticker } from '$lib/artifact-store';
   import { deleteRoll, loadRolls, tapeImage, type SoundRoll } from '$lib/sound-tape';
+  import { exportImage, journalFileName } from '$lib/image-export';
 
   type Step = 'welcome' | 'camera' | 'crop' | 'segment' | 'fragment' | 'arrange' | 'finish' | 'sound';
   type Fragment = {
@@ -57,7 +58,9 @@
   let savedStickers: SavedSticker[] = [];
   let soundRolls: SoundRoll[] = [];
   let isSavingJournal = false;
+  let isExportingJournal = false;
   let journalSaveError = '';
+  let journalExportMessage = '';
   const MIN_STROKE_LENGTH = 5;
 
   const placements = [
@@ -680,6 +683,24 @@
     }
   }
 
+  async function exportCurrentJournal() {
+    if (isExportingJournal) return;
+    isExportingJournal = true;
+    journalExportMessage = '';
+    try {
+      const result = await exportImage(await renderJournalPage(), journalFileName());
+      journalExportMessage = result === 'photos'
+        ? 'Saved to your photo library.'
+        : result === 'shared'
+          ? 'The image is ready to share or save.'
+          : 'Journal image downloaded.';
+    } catch (error) {
+      journalExportMessage = error instanceof Error ? error.message : 'The journal image could not be exported.';
+    } finally {
+      isExportingJournal = false;
+    }
+  }
+
   function restart() {
     stopCamera();
     fragments = [];
@@ -1061,7 +1082,13 @@
         </div>
       {:else}
         <button class="secondary" onclick={() => step = 'arrange'}>Adjust this page</button>
-        <button class="primary compact" onclick={finishGrounding} disabled={isSavingJournal}>{isSavingJournal ? 'Saving page…' : 'Finish grounding'} <span>✓</span></button>
+        <div class="finish-actions">
+          <button class="secondary export-button" onclick={exportCurrentJournal} disabled={isExportingJournal}>
+            {isExportingJournal ? 'Preparing image…' : Capacitor.isNativePlatform() ? 'Save image to Photos' : 'Download image'}
+          </button>
+          <button class="primary compact" onclick={finishGrounding} disabled={isSavingJournal}>{isSavingJournal ? 'Saving page…' : 'Finish grounding'} <span>✓</span></button>
+        </div>
+        {#if journalExportMessage}<p class="journal-export-message" role="status">{journalExportMessage}</p>{/if}
         {#if journalSaveError}<p class="journal-save-error" role="alert">{journalSaveError}</p>{/if}
       {/if}
     </section>
@@ -1204,6 +1231,10 @@
   .remove-page-button:active { transform:scale(.97); }
   .canvas-mode header { mix-blend-mode:multiply; }
   .journal-save-error { grid-column:1; max-width:330px; margin:0; color:#943f34; font-size:12px; line-height:1.5; }
+  .finish-actions { grid-column:2; display:flex; flex-wrap:wrap; justify-content:flex-end; gap:10px; }
+  .finish-actions .primary,.finish-actions .secondary { min-width:174px; }
+  .finish-actions button:disabled { cursor:default; opacity:.55; }
+  .journal-export-message { grid-column:2; max-width:360px; justify-self:end; margin:0; color:#3f675e; font-size:12px; line-height:1.5; text-align:right; }
 
   @media (max-width: 760px) {
     header { height:calc(68px + env(safe-area-inset-top)); padding:env(safe-area-inset-top) 22px 0; }
@@ -1217,6 +1248,9 @@
     .arrange-heading p { margin:auto; }
     .collage-shell { width:100%; }
     .arrange-screen > .secondary { align-self:center; }
+    .finish-actions { grid-column:1; width:100%; flex-direction:column-reverse; }
+    .finish-actions .primary,.finish-actions .secondary { width:100%; }
+    .journal-export-message { grid-column:1; justify-self:center; text-align:center; }
     .arrange-actions { align-self:center; align-items:center; }
     .collage { width:min(100%,540px); }
     .focus-screen { padding:calc(78px + env(safe-area-inset-top)) 14px max(18px, env(safe-area-inset-bottom)); }

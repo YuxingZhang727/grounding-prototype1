@@ -42,6 +42,13 @@ private struct LiveSignalView: View {
                         .font(.caption2.weight(.medium))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
+
+                    Spacer(minLength: 2)
+
+                    Image(systemName: manager.isPhoneReachable ? "iphone.radiowaves.left.and.right" : "iphone.slash")
+                        .font(.caption2)
+                        .foregroundStyle(manager.isPhoneReachable ? .mint : .secondary)
+                        .accessibilityLabel(manager.isPhoneReachable ? "手机实时连接正常" : "等待手机应用连接")
                 }
 
                 VStack(spacing: 0) {
