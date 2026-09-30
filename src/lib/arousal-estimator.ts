@@ -94,11 +94,15 @@ export function estimateArousal(
     evidenceCount += 1;
     factors.push({
       key: 'liveHeartRate',
-      label: delta >= 5
-        ? `Live heart rate is ${Math.round(delta)} BPM above this session's baseline.`
+      label: delta >= 20
+        ? `Smoothed live heart rate is at least 20 BPM above this session's baseline.`
+        : delta >= 10
+          ? `Smoothed live heart rate is 10–19 BPM above this session's baseline.`
+          : delta >= 5
+            ? `Smoothed live heart rate is 5–9 BPM above this session's baseline.`
         : delta <= -5
-          ? `Live heart rate is ${Math.abs(Math.round(delta))} BPM below this session's baseline, so it adds no elevated-arousal score.`
-          : 'Live heart rate is within 5 BPM of this session’s baseline.',
+          ? `Smoothed live heart rate is at least 5 BPM below this session's baseline, so it adds no elevated-arousal score.`
+          : 'Smoothed live heart rate is within 5 BPM of this session’s baseline.',
       contribution,
       direction: moving ? 'confounded' : contribution ? 'supporting' : 'neutral'
     });

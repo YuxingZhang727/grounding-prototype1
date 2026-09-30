@@ -66,10 +66,13 @@
   let healthMessage = 'Checking whether Apple Health is available…';
   let watchAvailability: WatchAvailability = { available:false, activated:false, paired:false, watchAppInstalled:false, reachable:false };
   let watchSnapshot: WatchSignalSnapshot = { available:false };
+  let analysisSnapshot: WatchSignalSnapshot = { available:false };
+  let recentLiveHeartRates: number[] = [];
+  let lastAnalyzedTimestamp = '';
   let watchCheckIns: WatchCheckIn[] = [];
   let watchClock = Date.now();
   let arousal: ArousalEstimate;
-  $: arousal = estimateArousal(watchSnapshot, healthTrends, watchClock);
+  $: arousal = estimateArousal(analysisSnapshot, healthTrends, watchClock);
   $: selectedHealthMetric = selectedHealthKey ? healthMetric(selectedHealthKey) : undefined;
   $: selectedHealthDetails = selectedHealthKey ? healthMetricDetails.find(item => item.key === selectedHealthKey) : undefined;
   $: selectedHealthChart = healthChart(selectedHealthMetric);
@@ -100,6 +103,22 @@
     if (!watchAvailability.watchAppInstalled) return 'Install the Grounding Watch app to begin.';
     if (watchAgeSeconds() !== null) return `Last Watch update was ${watchAgeSeconds()} seconds ago.`;
     return 'Open Grounding on your watch and start a measurement.';
+  }
+  function acceptWatchSnapshot(snapshot: WatchSignalSnapshot) {
+    watchSnapshot = snapshot;
+    if (!snapshot.isRunning) {
+      recentLiveHeartRates = [];
+      lastAnalyzedTimestamp = '';
+      analysisSnapshot = snapshot;
+      return;
+    }
+    if (typeof snapshot.bpm === 'number' && snapshot.timestamp && snapshot.timestamp !== lastAnalyzedTimestamp) {
+      lastAnalyzedTimestamp = snapshot.timestamp;
+      recentLiveHeartRates = [...recentLiveHeartRates.slice(-4), snapshot.bpm];
+    }
+    const ordered = [...recentLiveHeartRates].sort((a, b) => a - b);
+    const smoothedBPM = ordered.length ? ordered[Math.floor(ordered.length / 2)] : snapshot.bpm;
+    analysisSnapshot = { ...snapshot, bpm:smoothedBPM };
   }
   function checkInTime(timestamp: string) {
     const date = new Date(timestamp);
@@ -321,7 +340,7 @@
         // complete in the small gap between the read and listener setup.
         const handles = await Promise.all([
           onWatchSignal(snapshot => {
-            watchSnapshot = snapshot;
+            acceptWatchSnapshot(snapshot);
             watchAvailability = {
               ...watchAvailability,
               available:true,
@@ -342,9 +361,12 @@
         } else {
           handles.forEach(handle => { if (handle) watchListenerHandles.push(handle); });
         }
-        [watchAvailability, watchSnapshot, watchCheckIns] = await Promise.all([
+        const [availability, latestSnapshot, checkIns] = await Promise.all([
           getWatchAvailability(), getLatestWatchSignal(), getWatchCheckIns()
         ]);
+        watchAvailability = availability;
+        watchCheckIns = checkIns;
+        acceptWatchSnapshot(latestSnapshot);
         if (watchSnapshot.kind === 'snapshot') {
           watchAvailability = { ...watchAvailability, paired:true, watchAppInstalled:true };
         }
@@ -359,7 +381,7 @@
       watchRequestInFlight = true;
       try {
         const snapshot = await requestLatestWatchSignal();
-        if (snapshot.kind === 'snapshot') watchSnapshot = snapshot;
+        if (snapshot.kind === 'snapshot') acceptWatchSnapshot(snapshot);
       } finally {
         watchRequestInFlight = false;
       }
@@ -403,6 +425,9 @@
           <details class="estimate-details">
             <summary><span><strong>How this was estimated</strong><small>{arousal.factors.length} current and historical inputs</small></span><AppIcon name="chevron" size={18}/></summary>
             <div class="estimate-details-body">
+              {#if watchIsLive() && typeof watchSnapshot.bpm === 'number'}
+                <div class="live-input-row"><span><i aria-hidden="true"></i>Live Watch input</span><strong>{Math.round(watchSnapshot.bpm)} BPM</strong></div>
+              {/if}
               <ul>
                 {#each arousal.factors.slice(0, 4) as factor}
                   <li><span class:confounded={factor.direction === 'confounded'}>{factor.direction === 'confounded' ? 'Context' : factor.direction === 'supporting' ? 'Adds score' : 'No added score'}</span><p>{factor.label}</p></li>
@@ -411,7 +436,7 @@
               <div class="estimate-method">
                 <strong>What “near baseline” means in this prototype</strong>
                 <p>The internal rule score is {arousal.score ?? 0}/100: 0–24 is near baseline, 25–49 is a slight shift, and 50–100 is higher activation.</p>
-                <p>The live baseline is the median of the first 5–8 low-motion heart-rate readings in this Watch session. Historical signals use the previous 14 days, excluding the latest reading.</p>
+                <p>The live baseline is the median of the first 5–8 low-motion heart-rate readings in this Watch session. The estimate uses the median of up to five recent live readings to avoid reacting to every one-beat fluctuation. Historical signals use the previous 14 days, excluding the latest reading.</p>
               </div>
               <p class="estimate-disclaimer">This is a rule-based estimate of bodily arousal. It cannot determine whether you are anxious or explain why a signal changed.</p>
             </div>
@@ -619,7 +644,7 @@
   :global(*){box-sizing:border-box} :global(html){background:#f7f1e7} :global(body){margin:0;color:#2f302d;font-family:Manrope,Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;overscroll-behavior:none} :global(button){font:inherit;color:inherit} :global(button:focus-visible),:global(a:focus-visible){outline:2px solid #b9785f;outline-offset:3px}
   .app-shell{--bg:#f7f1e7;--surface:#fffdf9;--cream:#f1e7d6;--border:#ded6c9;--muted:#6f716b;--sun:#efb23e;--sun-soft:#fcecc6;--teal:#ddebe6;--coral:#efc5b5;min-height:100dvh;background:var(--bg);position:relative;overflow:hidden}.app-scroll{height:100dvh;overflow-y:auto;overscroll-behavior-y:contain;scrollbar-width:none;padding:0 max(env(safe-area-inset-right),0px) calc(100px + env(safe-area-inset-bottom)) max(env(safe-area-inset-left),0px)}.app-scroll::-webkit-scrollbar{display:none}.page{width:min(100%,680px);min-height:100%;margin:auto;padding:calc(22px + env(safe-area-inset-top)) 24px 34px}.page-header{min-height:44px;display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}.page-header h1{font-size:28px;line-height:1.2;margin:0;font-weight:750;letter-spacing:-.025em}.eyebrow{text-transform:uppercase;letter-spacing:.11em;font-size:10px;font-weight:650;color:#b26e54;margin:0 0 7px}.avatar{width:32px;height:32px;border-radius:50%;background:radial-gradient(circle at 50% 38%,#fff8df 0 18%,transparent 19%),linear-gradient(145deg,#f0b33f 0 46%,#dcebe6 47%);border:1px solid #d6c8b6}.avatar.large{width:48px;height:48px}
   h2{margin:0}.state-card,.focus-card,.summary-card,.trend-card,.health-card,.profile-card,.settings-list,.session-list{border:1px solid var(--border);background:var(--surface);border-radius:22px}.state-card{padding:18px;display:flex;align-items:center;gap:20px;justify-content:space-between;border-left:5px solid #7aa59d}.state-card>div:first-child{min-width:0}.state-card.unavailable{border-left-color:#bbb3a7}.state-card.mild{border-left-color:var(--sun)}.state-card.elevated{border-left-color:#c46f57}.state-card h2{font-size:19px;margin-bottom:7px}.state-card p:last-child,.focus-card p,.trend-card p,.profile-card p,.archive-hero p{font-size:13px;line-height:1.55;color:var(--muted);margin:0}.watch-source{width:78px;flex:none;display:flex;flex-direction:column;align-items:center;text-align:center;color:var(--muted)}.watch-source>span{position:relative;width:44px;height:44px;display:grid;place-items:center;border-radius:15px;background:var(--cream)}.watch-source i{position:absolute;right:4px;bottom:4px;width:9px;height:9px;border:2px solid var(--surface);border-radius:50%;background:#aaa59d}.watch-source strong{margin-top:6px;font-size:11px}.watch-source small{margin-top:2px;font-size:9px}.watch-source.active{color:#355f59}.watch-source.active>span{background:var(--teal)}.watch-source.active i{background:#3f9187}.watch-source.delayed i{background:#d4982d}.focus-card{margin-top:14px;padding:21px;background:var(--coral);border:0;display:grid;grid-template-columns:1fr 110px;min-height:220px;overflow:hidden}.focus-card.prominent{box-shadow:inset 5px 0 0 #b65f49}.focus-copy{position:relative;z-index:2}.focus-card h2{font-size:23px;line-height:1.2;margin:5px 0 9px}.primary{min-height:52px;padding:0 20px;border:0;border-radius:16px;background:var(--sun);font-weight:700;cursor:pointer;touch-action:manipulation}.primary:active{opacity:.72}.primary:disabled{cursor:default;opacity:.55}.focus-card .primary{margin-top:17px}.policy-meta{display:flex;flex-wrap:wrap;gap:7px;margin-top:13px}.policy-meta span{padding:6px 8px;border-radius:999px;background:#fffdf980;font-size:9px;font-weight:700;text-transform:capitalize;color:#655f58}.paper-motif{position:relative;min-height:130px}.paper-motif i,.paper-motif b{position:absolute;display:block;width:82px;height:72px;border-radius:18px;transform:rotate(8deg);background:var(--sun-soft);top:35px;left:0}.paper-motif i:nth-child(2){background:var(--teal);transform:rotate(-8deg);left:35px;top:20px}.paper-motif b{width:45px;height:45px;border-radius:50%;background:var(--sun);left:70px;top:63px}.section-title{display:flex;align-items:center;justify-content:space-between;margin:26px 0 10px}.section-title h2,.list-heading{font-size:17px}.section-title button{border:0;background:none;color:var(--muted);font-size:12px}.task-list,.session-list,.settings-list{overflow:hidden}.task-list article,.session-list article,.settings-list article{min-height:67px;padding:12px 15px;display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--border)}.task-list article:last-child,.session-list article:last-child,.settings-list article:last-child{border:0}.task-list div,.session-list div,.settings-list div{display:flex;flex:1;flex-direction:column;gap:3px}.task-list span,.session-list small,.settings-list small,.settings-list article>span{font-size:11px;color:var(--muted)}
-  .estimate-details{margin-top:12px;border:1px solid var(--border);border-radius:18px;background:var(--surface);overflow:hidden}.estimate-details summary{min-height:58px;padding:10px 15px;display:flex;align-items:center;justify-content:space-between;gap:12px;cursor:pointer;list-style:none}.estimate-details summary::-webkit-details-marker{display:none}.estimate-details summary>span{display:flex;flex-direction:column;gap:3px}.estimate-details summary strong{font-size:12px}.estimate-details summary small{font-size:10px;color:var(--muted)}.estimate-details summary :global(svg){transition:transform .2s ease}.estimate-details[open] summary :global(svg){transform:rotate(90deg)}.estimate-details-body{padding:0 15px 15px;border-top:1px solid var(--border)}.estimate-details ul{display:grid;gap:9px;margin:14px 0 0;padding:0;list-style:none}.estimate-details li{display:grid;grid-template-columns:84px 1fr;gap:10px;align-items:start}.estimate-details li>span{padding:5px 7px;border-radius:9px;background:var(--teal);font-size:9px;font-weight:700;text-align:center}.estimate-details li>span.confounded{background:var(--sun-soft)}.estimate-details li p{margin:2px 0 0;font-size:11px;line-height:1.45;color:var(--muted)}.estimate-method{margin-top:14px;padding:13px;border-radius:14px;background:var(--cream)}.estimate-method strong{font-size:11px}.estimate-method p{margin:6px 0 0;font-size:10px;line-height:1.5;color:var(--muted)}.estimate-disclaimer{margin:15px 0 0;padding-top:13px;border-top:1px solid var(--border);font-size:10px;line-height:1.5;color:var(--muted)}
+  .estimate-details{margin-top:12px;border:1px solid var(--border);border-radius:18px;background:var(--surface);overflow:hidden}.estimate-details summary{min-height:58px;padding:10px 15px;display:flex;align-items:center;justify-content:space-between;gap:12px;cursor:pointer;list-style:none}.estimate-details summary::-webkit-details-marker{display:none}.estimate-details summary>span{display:flex;flex-direction:column;gap:3px}.estimate-details summary strong{font-size:12px}.estimate-details summary small{font-size:10px;color:var(--muted)}.estimate-details summary :global(svg){transition:transform .2s ease}.estimate-details[open] summary :global(svg){transform:rotate(90deg)}.estimate-details-body{padding:0 15px 15px;border-top:1px solid var(--border)}.live-input-row{min-height:48px;margin:12px 0 0;padding:0 12px;border-radius:13px;background:var(--teal);display:flex;align-items:center;justify-content:space-between;gap:12px}.live-input-row span{display:flex;align-items:center;gap:7px;font-size:10px;color:#466b64}.live-input-row i{width:7px;height:7px;border-radius:50%;background:#3f9187;box-shadow:0 0 0 4px #7fbbb233}.live-input-row strong{font-size:14px;font-variant-numeric:tabular-nums}.estimate-details ul{display:grid;gap:9px;margin:14px 0 0;padding:0;list-style:none}.estimate-details li{display:grid;grid-template-columns:84px 1fr;gap:10px;align-items:start}.estimate-details li>span{padding:5px 7px;border-radius:9px;background:var(--teal);font-size:9px;font-weight:700;text-align:center}.estimate-details li>span.confounded{background:var(--sun-soft)}.estimate-details li p{margin:2px 0 0;font-size:11px;line-height:1.45;color:var(--muted)}.estimate-method{margin-top:14px;padding:13px;border-radius:14px;background:var(--cream)}.estimate-method strong{font-size:11px}.estimate-method p{margin:6px 0 0;font-size:10px;line-height:1.5;color:var(--muted)}.estimate-disclaimer{margin:15px 0 0;padding-top:13px;border-top:1px solid var(--border);font-size:10px;line-height:1.5;color:var(--muted)}
   .summary-card{display:grid;grid-template-columns:repeat(3,1fr);padding:16px;margin-bottom:14px}.summary-card div{display:flex;flex-direction:column;gap:3px;padding:5px 10px;border-right:1px solid var(--border)}.summary-card div:last-child{border:0}.summary-card strong{font-size:24px}.summary-card span{font-size:10px;color:var(--muted)}.trend-card{padding:18px}.trend-card .section-title{margin:0 0 18px}.trend-card .section-title span{font-size:11px;color:var(--muted)}.bars{height:105px;display:flex;gap:13px;align-items:end;border-bottom:1px solid var(--border);margin-bottom:18px}.bars i{display:block;position:relative;width:28px;max-height:90px;border-radius:9px 9px 0 0;background:#c9ddb8}.bars i:nth-child(3){background:#efc5b5}.bars span{position:absolute;bottom:-17px;width:100%;text-align:center;font:10px/1 Manrope;color:var(--muted)}.list-heading{margin:24px 0 10px}.method-dot{width:34px;height:34px;border-radius:12px;background:var(--coral)}.method-dot.breathing{background:#c8dde8}
   .health-card{margin-top:14px;padding:18px}.health-card-header{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}.health-title{display:flex;align-items:center;gap:11px}.health-title .eyebrow{margin-bottom:4px}.health-title h2{font-size:18px}.health-icon{width:42px;height:42px;flex:none;border-radius:14px;display:grid;place-items:center;background:var(--coral);color:#844f43}.health-status{flex:none;padding:7px 9px;border-radius:999px;background:var(--cream);color:var(--muted);font-size:10px;font-weight:700}.health-status.active{background:var(--teal);color:#355f59}.health-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:18px}.health-grid>button{min-width:0;min-height:154px;padding:14px;border:0;border-radius:17px;background:#f7f1e7;text-align:left;cursor:pointer;display:flex;flex-direction:column;align-items:stretch}.health-grid>button:active{opacity:.72}.health-grid>button.unavailable{background:#f5f2ec;opacity:.72}.health-grid>button>span:first-child{display:block;min-height:30px;font-size:11px;line-height:1.35;color:var(--muted)}.health-grid>button>div{display:flex;align-items:baseline;gap:5px;margin-top:6px}.health-grid strong{font-size:25px;line-height:1}.health-grid small{font-size:10px;color:var(--muted)}.health-grid>button>p{min-height:32px;margin:9px 0 0;font-size:10px;line-height:1.45;color:var(--muted)}.health-grid .view-history{min-height:auto!important;margin-top:auto;padding-top:10px;display:flex!important;align-items:center;justify-content:flex-end;gap:3px;color:#466b64!important;font-size:9px!important;font-weight:700}.health-card-footer{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin-top:14px;padding-top:13px;border-top:1px solid var(--border)}.health-card-footer p{max-width:380px;margin:0;font-size:10px;line-height:1.45;color:var(--muted)}.health-card-footer span{flex:none;font-size:9px;line-height:1.4;color:var(--muted);text-align:right}.health-empty{min-height:132px;margin-top:18px;padding:22px;border-radius:18px;display:flex;flex-direction:column;align-items:flex-start;justify-content:center;background:#f7f1e7}.health-empty strong{font-size:14px}.health-empty p{margin:7px 0 0;font-size:12px;line-height:1.5;color:var(--muted)}.health-empty.loading{align-items:center;text-align:center}.loading-dot{width:22px;height:22px;margin-bottom:12px;border:3px solid #d8ccbd;border-top-color:#b26e54;border-radius:50%;animation:health-spin .8s linear infinite}.health-actions{display:flex;justify-content:flex-end;margin-top:13px}.secondary{min-height:44px;padding:0 15px;border:1px solid var(--border);border-radius:14px;background:var(--surface);font-size:12px;font-weight:700;cursor:pointer}.secondary:active,.settings-row:active,.text-button:active{opacity:.66}.sr-status{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}@keyframes health-spin{to{transform:rotate(360deg)}}
   .watch-checkins{margin:0 0 14px;padding:18px;border:1px solid var(--border);border-radius:22px;background:var(--surface)}.watch-checkins .section-title{margin:0 0 12px}.watch-checkins .section-title>div{display:block}.watch-checkins .section-title>span{min-width:30px;height:30px;border-radius:15px;background:var(--teal);display:grid;place-items:center;font-size:11px;font-weight:700}.watch-checkin-list{overflow:hidden;border:1px solid var(--border);border-radius:17px}.watch-checkin-list article{min-height:62px;padding:10px 13px;display:flex;align-items:center;gap:13px;border-bottom:1px solid var(--border)}.watch-checkin-list article:last-child{border:0}.watch-checkin-list article>strong{width:38px;height:38px;border-radius:14px;background:var(--sun-soft);display:grid;place-items:center;font-size:19px}.watch-checkin-list article>div{display:flex;flex-direction:column;gap:3px}.watch-checkin-list span{font-size:12px;font-weight:700}.watch-checkin-list small{font-size:10px;color:var(--muted)}
