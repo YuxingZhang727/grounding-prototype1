@@ -335,8 +335,9 @@ private final class WatchSignalSender: NSObject, WCSessionDelegate {
         if let bpm {
             // Keep the concise key for existing builds and include an explicit
             // alias so the Capacitor boundary can recover across bridge types.
-            message["bpm"] = bpm
-            message["heartRateBPM"] = bpm
+            message["bpm"] = NSNumber(value: bpm)
+            message["heartRateBPM"] = NSNumber(value: bpm)
+            message["bpmText"] = String(format: "%.3f", bpm)
         }
         if let baselineBPM { message["baselineBPM"] = baselineBPM }
         snapshotLock.lock()

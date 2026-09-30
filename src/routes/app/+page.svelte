@@ -118,8 +118,8 @@
       : rawRunning === true || rawRunning === 1 || rawRunning === 'true';
     return {
       ...snapshot,
-      bpm:numberValue(raw.bpm) ?? numberValue(raw.heartRateBPM),
-      heartRateBPM:numberValue(raw.heartRateBPM) ?? numberValue(raw.bpm),
+      bpm:numberValue(raw.bpm) ?? numberValue(raw.heartRateBPM) ?? numberValue(raw.bpmText),
+      heartRateBPM:numberValue(raw.heartRateBPM) ?? numberValue(raw.bpm) ?? numberValue(raw.bpmText),
       baselineBPM:numberValue(raw.baselineBPM),
       baselineSampleCount:numberValue(raw.baselineSampleCount),
       baselineTarget:numberValue(raw.baselineTarget),

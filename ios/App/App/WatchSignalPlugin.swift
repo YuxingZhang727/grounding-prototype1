@@ -61,6 +61,7 @@ private final class WatchSignalReceiver: NSObject, WCSessionDelegate {
     private(set) var latestSnapshot: [String: Any]?
     private(set) var checkIns: [[String: Any]] = []
     private var lastSnapshotPersistedAt = Date.distantPast
+    private var loggedFirstHeartRate = false
 
     var availability: [String: Any] {
         guard WCSession.isSupported() else {
@@ -121,20 +122,47 @@ private final class WatchSignalReceiver: NSObject, WCSessionDelegate {
     private func receive(_ message: [String: Any]) {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            if message["kind"] as? String == "checkIn" {
-                self.storeCheckIn(message)
+            let payload = self.normalizedPayload(message)
+            if payload["kind"] as? String == "checkIn" {
+                self.storeCheckIn(payload)
             } else {
-                self.latestSnapshot = message
+                self.latestSnapshot = payload
                 let now = Date()
-                let sessionStopped = message["isRunning"] as? Bool == false
+                let sessionStopped = payload["isRunning"] as? Bool == false
                 if sessionStopped || now.timeIntervalSince(self.lastSnapshotPersistedAt) >= 5 {
-                    UserDefaults.standard.set(message, forKey: Self.latestKey)
+                    UserDefaults.standard.set(payload, forKey: Self.latestKey)
                     self.lastSnapshotPersistedAt = now
                 }
-                self.onMessage?("signalUpdate", message)
-                self.acknowledgeSnapshot(message)
+                self.onMessage?("signalUpdate", payload)
+                self.acknowledgeSnapshot(payload)
             }
         }
+    }
+
+    private func normalizedPayload(_ message: [String: Any]) -> [String: Any] {
+        var payload = message
+        let heartRate = numericValue(message["bpm"])
+            ?? numericValue(message["heartRateBPM"])
+            ?? numericValue(message["bpmText"])
+        if let heartRate {
+            let bridgedValue = NSNumber(value: heartRate)
+            payload["bpm"] = bridgedValue
+            payload["heartRateBPM"] = bridgedValue
+            if !loggedFirstHeartRate {
+                loggedFirstHeartRate = true
+                print("[WatchSignal] First heart rate received: \(heartRate) BPM")
+            }
+        } else if (numericValue(message["baselineSampleCount"]) ?? 0) > 0 {
+            let keys = message.keys.sorted().joined(separator: ", ")
+            print("[WatchSignal] Baseline sample arrived without heart rate. Payload keys: \(keys)")
+        }
+        return payload
+    }
+
+    private func numericValue(_ value: Any?) -> Double? {
+        if let number = value as? NSNumber { return number.doubleValue }
+        if let string = value as? String { return Double(string) }
+        return nil
     }
 
     private func acknowledgeSnapshot(_ snapshot: [String: Any]) {
