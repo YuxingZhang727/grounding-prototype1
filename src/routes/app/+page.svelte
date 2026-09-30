@@ -118,7 +118,8 @@
       : rawRunning === true || rawRunning === 1 || rawRunning === 'true';
     return {
       ...snapshot,
-      bpm:numberValue(raw.bpm),
+      bpm:numberValue(raw.bpm) ?? numberValue(raw.heartRateBPM),
+      heartRateBPM:numberValue(raw.heartRateBPM) ?? numberValue(raw.bpm),
       baselineBPM:numberValue(raw.baselineBPM),
       baselineSampleCount:numberValue(raw.baselineSampleCount),
       baselineTarget:numberValue(raw.baselineTarget),
@@ -528,7 +529,7 @@
             {#if watchHasReading()}
               <div class="live-input-row"><span><i aria-hidden="true"></i>Watch heart rate</span><strong>{Math.round(watchSnapshot.bpm!)} BPM</strong></div>
             {:else}
-              <div class="live-input-row pending"><span><i aria-hidden="true"></i>Watch heart rate</span><strong>{watchSnapshot.isRunning ? 'Starting' : 'Waiting'}</strong></div>
+              <div class="live-input-row pending"><span><i aria-hidden="true"></i>Watch heart rate</span><strong>{watchSnapshot.isRunning ? '— BPM' : 'Waiting'}</strong></div>
             {/if}
             <div class:ready={baselineIsReady()} class="baseline-progress">
               <div>

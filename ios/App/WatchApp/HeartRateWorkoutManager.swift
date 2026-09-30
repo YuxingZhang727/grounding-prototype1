@@ -209,6 +209,7 @@ final class HeartRateWorkoutManager: NSObject, ObservableObject {
     }
 
     private func processHeartRate(_ value: Double) {
+        let isFirstReading = bpm == nil
         bpm = value
         if motionIntensity < 0.12, baselineSamples.count < 8 {
             baselineSamples.append(value)
@@ -217,7 +218,9 @@ final class HeartRateWorkoutManager: NSObject, ObservableObject {
             }
         }
         updateSignalState()
-        sendSnapshot()
+        // The first sensor value should reach the phone immediately instead of
+        // waiting for the regular one-second telemetry cadence.
+        sendSnapshot(force: isFirstReading)
     }
 
     private func updateSignalState() {
@@ -329,7 +332,12 @@ private final class WatchSignalSender: NSObject, WCSessionDelegate {
             "status": status,
             "timestamp": ISO8601DateFormatter().string(from: Date())
         ]
-        if let bpm { message["bpm"] = bpm }
+        if let bpm {
+            // Keep the concise key for existing builds and include an explicit
+            // alias so the Capacitor boundary can recover across bridge types.
+            message["bpm"] = bpm
+            message["heartRateBPM"] = bpm
+        }
         if let baselineBPM { message["baselineBPM"] = baselineBPM }
         snapshotLock.lock()
         latestSnapshot = message
