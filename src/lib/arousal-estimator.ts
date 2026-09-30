@@ -65,8 +65,13 @@ export function estimateArousal(
   now = Date.now()
 ): ArousalEstimate {
   const timestamp = live.timestamp ? new Date(live.timestamp).getTime() : Number.NaN;
-  const isFresh = Number.isFinite(timestamp) && now - timestamp >= 0 && now - timestamp < 15_000;
-  const hasLiveHR = live.isRunning === true && isFresh && typeof live.bpm === 'number';
+  const age = now - timestamp;
+  const isFresh = Number.isFinite(timestamp) && age >= 0 && age < 15_000;
+  // WatchConnectivity can pause briefly even while a session is running. Keep
+  // the last valid estimate for up to five minutes and expose freshness as
+  // confidence/status instead of clearing the whole UI after 15 seconds.
+  const isRetainable = Number.isFinite(timestamp) && age >= 0 && age < 5 * 60_000;
+  const hasLiveHR = live.isRunning === true && isRetainable && typeof live.bpm === 'number';
 
   if (!hasLiveHR) {
     return {
@@ -74,7 +79,9 @@ export function estimateArousal(
       score: null,
       confidence: 'low',
       label: 'Waiting for a current reading',
-      summary: 'Start a Watch monitoring session to estimate current physiological arousal.',
+      summary: live.isRunning
+        ? 'Waiting for the first usable heart-rate reading from your Watch.'
+        : 'Start a Watch monitoring session to estimate current physiological arousal.',
       factors: [],
       policy: unavailablePolicy,
       updatedAt: live.timestamp
@@ -165,7 +172,7 @@ export function estimateArousal(
 
   score = Math.max(0, Math.min(100, Math.round(score)));
   const level: ArousalLevel = score >= 50 ? 'elevated' : score >= 25 ? 'mild' : 'settled';
-  const confidence: EstimateConfidence = moving
+  const confidence: EstimateConfidence = !isFresh || moving
     ? 'low'
     : evidenceCount >= 3 && typeof live.baselineBPM === 'number'
       ? 'high'
@@ -182,7 +189,9 @@ export function estimateArousal(
       : level === 'mild'
         ? 'Slightly more activated than usual'
         : 'Body signals are near your usual range',
-    summary: moving
+    summary: !isFresh
+      ? 'Holding the last valid estimate while waiting for the next Watch update.'
+      : moving
       ? 'The signal is being interpreted cautiously because movement can raise heart rate.'
       : level === 'elevated'
         ? 'Several current or recent signals are away from your personal baseline.'
