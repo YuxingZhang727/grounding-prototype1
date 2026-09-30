@@ -297,6 +297,7 @@ private final class WatchSignalSender: NSObject, WCSessionDelegate {
     var onReachabilityChanged: ((Bool) -> Void)?
     private let snapshotLock = NSLock()
     private var latestSnapshot: [String: Any]?
+    private var hasPhoneReceipt = false
 
     func activate() {
         guard WCSession.isSupported() else {
@@ -372,11 +373,11 @@ private final class WatchSignalSender: NSObject, WCSessionDelegate {
         activationDidCompleteWith activationState: WCSessionActivationState,
         error: Error?
     ) {
-        onReachabilityChanged?(activationState == .activated && session.isReachable)
+        reportPhoneLink(session)
     }
 
     func sessionReachabilityDidChange(_ session: WCSession) {
-        onReachabilityChanged?(session.isReachable)
+        reportPhoneLink(session)
         guard session.isReachable else { return }
         snapshotLock.lock()
         let snapshot = latestSnapshot
@@ -399,5 +400,26 @@ private final class WatchSignalSender: NSObject, WCSessionDelegate {
         let snapshot = latestSnapshot
         snapshotLock.unlock()
         replyHandler(snapshot ?? ["available": false])
+    }
+
+    func session(_ session: WCSession, didReceiveMessage message: [String: Any]) {
+        acceptPhoneReceipt(message, session: session)
+    }
+
+    func session(
+        _ session: WCSession,
+        didReceiveApplicationContext applicationContext: [String: Any]
+    ) {
+        acceptPhoneReceipt(applicationContext, session: session)
+    }
+
+    private func acceptPhoneReceipt(_ message: [String: Any], session: WCSession) {
+        guard message["kind"] as? String == "snapshotReceipt" else { return }
+        hasPhoneReceipt = true
+        reportPhoneLink(session)
+    }
+
+    private func reportPhoneLink(_ session: WCSession) {
+        onReachabilityChanged?(hasPhoneReceipt || session.isReachable)
     }
 }

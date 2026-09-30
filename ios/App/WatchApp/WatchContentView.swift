@@ -48,7 +48,7 @@ private struct LiveSignalView: View {
                     Image(systemName: manager.isPhoneReachable ? "iphone.radiowaves.left.and.right" : "iphone.slash")
                         .font(.caption2)
                         .foregroundStyle(manager.isPhoneReachable ? .mint : .secondary)
-                        .accessibilityLabel(manager.isPhoneReachable ? "iPhone connection active" : "Waiting for iPhone app")
+                        .accessibilityLabel(manager.isPhoneReachable ? "iPhone link confirmed" : "Waiting for iPhone app")
                 }
 
                 VStack(spacing: 0) {

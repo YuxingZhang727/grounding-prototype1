@@ -132,7 +132,25 @@ private final class WatchSignalReceiver: NSObject, WCSessionDelegate {
                     self.lastSnapshotPersistedAt = now
                 }
                 self.onMessage?("signalUpdate", message)
+                self.acknowledgeSnapshot(message)
             }
+        }
+    }
+
+    private func acknowledgeSnapshot(_ snapshot: [String: Any]) {
+        guard WCSession.isSupported(),
+              WCSession.default.activationState == .activated else { return }
+        var receipt: [String: Any] = ["kind": "snapshotReceipt"]
+        if let timestamp = snapshot["timestamp"] as? String {
+            receipt["timestamp"] = timestamp
+        }
+        let session = WCSession.default
+        if session.isReachable {
+            session.sendMessage(receipt, replyHandler: nil, errorHandler: { _ in
+                try? session.updateApplicationContext(receipt)
+            })
+        } else {
+            try? session.updateApplicationContext(receipt)
         }
     }
 

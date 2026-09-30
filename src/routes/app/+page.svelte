@@ -106,24 +106,60 @@
     if (watchSnapshot.isRunning) return watchSnapshot.status || 'Receiving signals from your watch.';
     return 'Open Grounding on your watch and start a measurement.';
   }
-  function acceptWatchSnapshot(snapshot: WatchSignalSnapshot) {
+  function normalizeWatchSnapshot(snapshot: WatchSignalSnapshot): WatchSignalSnapshot {
+    const raw = snapshot as WatchSignalSnapshot & Record<string, unknown>;
+    const rawRunning = (snapshot as Record<string, unknown>).isRunning;
+    const numberValue = (value: unknown) => {
+      const parsed = typeof value === 'number' ? value : Number(value);
+      return Number.isFinite(parsed) ? parsed : undefined;
+    };
+    const runningValue = rawRunning === undefined
+      ? undefined
+      : rawRunning === true || rawRunning === 1 || rawRunning === 'true';
+    return {
+      ...snapshot,
+      bpm:numberValue(raw.bpm),
+      baselineBPM:numberValue(raw.baselineBPM),
+      baselineSampleCount:numberValue(raw.baselineSampleCount),
+      baselineTarget:numberValue(raw.baselineTarget),
+      motionIntensity:numberValue(raw.motionIntensity),
+      elapsedTime:numberValue(raw.elapsedTime),
+      isRunning:runningValue
+    };
+  }
+  function acceptWatchSnapshot(rawSnapshot: WatchSignalSnapshot) {
+    const snapshot = normalizeWatchSnapshot(rawSnapshot);
     const incomingTime = snapshot.timestamp ? new Date(snapshot.timestamp).getTime() : Number.NaN;
     const currentTime = watchSnapshot.timestamp ? new Date(watchSnapshot.timestamp).getTime() : Number.NaN;
     if (Number.isFinite(incomingTime) && Number.isFinite(currentTime) && incomingTime < currentTime) return;
-    watchSnapshot = snapshot;
     if (!snapshot.isRunning) {
+      watchSnapshot = {
+        ...snapshot,
+        bpm:undefined,
+        baselineBPM:undefined,
+        baselineSampleCount:0
+      };
       recentLiveHeartRates = [];
       lastAnalyzedTimestamp = '';
-      analysisSnapshot = snapshot;
+      analysisSnapshot = watchSnapshot;
       return;
     }
+    // During an active session, a transport-level status packet must not erase
+    // the last physiological reading. Only explicitly present values replace it.
+    watchSnapshot = {
+      ...watchSnapshot,
+      ...snapshot,
+      bpm:snapshot.bpm ?? watchSnapshot.bpm,
+      baselineBPM:snapshot.baselineBPM ?? watchSnapshot.baselineBPM,
+      baselineSampleCount:snapshot.baselineSampleCount ?? watchSnapshot.baselineSampleCount
+    };
     if (typeof snapshot.bpm === 'number' && snapshot.timestamp && snapshot.timestamp !== lastAnalyzedTimestamp) {
       lastAnalyzedTimestamp = snapshot.timestamp;
       recentLiveHeartRates = [...recentLiveHeartRates.slice(-4), snapshot.bpm];
     }
     const ordered = [...recentLiveHeartRates].sort((a, b) => a - b);
     const smoothedBPM = ordered.length ? ordered[Math.floor(ordered.length / 2)] : snapshot.bpm;
-    analysisSnapshot = { ...snapshot, bpm:smoothedBPM };
+    analysisSnapshot = { ...watchSnapshot, bpm:smoothedBPM };
   }
   function checkInTime(timestamp: string) {
     const date = new Date(timestamp);

@@ -66,7 +66,7 @@ export function estimateArousal(
   // WatchConnectivity delivery is event-driven and may be irregular. A valid
   // reading remains the current session reading until the Watch explicitly
   // sends a newer snapshot or reports that the session has stopped.
-  const hasLiveHR = live.isRunning === true && typeof live.bpm === 'number';
+  const hasLiveHR = Boolean(live.isRunning) && typeof live.bpm === 'number';
 
   if (!hasLiveHR) {
     return {
