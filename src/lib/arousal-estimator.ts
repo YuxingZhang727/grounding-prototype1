@@ -94,7 +94,11 @@ export function estimateArousal(
     evidenceCount += 1;
     factors.push({
       key: 'liveHeartRate',
-      label: delta >= 5 ? `Live heart rate is ${Math.round(delta)} BPM above this session's baseline.` : 'Live heart rate is close to this session’s baseline.',
+      label: delta >= 5
+        ? `Live heart rate is ${Math.round(delta)} BPM above this session's baseline.`
+        : delta <= -5
+          ? `Live heart rate is ${Math.abs(Math.round(delta))} BPM below this session's baseline, so it adds no elevated-arousal score.`
+          : 'Live heart rate is within 5 BPM of this session’s baseline.',
       contribution,
       direction: moving ? 'confounded' : contribution ? 'supporting' : 'neutral'
     });
@@ -107,7 +111,9 @@ export function estimateArousal(
     evidenceCount += 1;
     factors.push({
       key: 'restingHeartRate',
-      label: contribution ? 'Recent resting heart rate is above the personal baseline.' : 'Recent resting heart rate is near the personal baseline.',
+      label: contribution
+        ? `Recent resting heart rate is ${Math.round(restingDeviation * 100)}% above the personal baseline.`
+        : 'Recent resting heart rate is less than 8% above the personal baseline.',
       contribution,
       direction: contribution ? 'supporting' : 'neutral'
     });
@@ -121,7 +127,9 @@ export function estimateArousal(
     evidenceCount += 1;
     factors.push({
       key: 'hrv',
-      label: contribution ? 'Recent HRV is below the personal baseline.' : 'Recent HRV is near the personal baseline.',
+      label: contribution
+        ? `Recent HRV is ${Math.round(decrease * 100)}% below the personal baseline.`
+        : 'Recent HRV is less than 10% below the personal baseline.',
       contribution,
       direction: contribution ? 'supporting' : 'neutral'
     });
@@ -134,7 +142,9 @@ export function estimateArousal(
     evidenceCount += 1;
     factors.push({
       key: 'respiratoryRate',
-      label: contribution ? 'Recent respiratory rate is above the personal baseline.' : 'Recent respiratory rate is near the personal baseline.',
+      label: contribution
+        ? `Recent respiratory rate is ${Math.round(respiratoryDeviation * 100)}% above the personal baseline.`
+        : 'Recent respiratory rate is less than 8% above the personal baseline.',
       contribution,
       direction: contribution ? 'supporting' : 'neutral'
     });
