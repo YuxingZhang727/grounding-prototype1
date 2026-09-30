@@ -73,7 +73,7 @@ export function estimateArousal(
       level: 'unavailable',
       score: null,
       confidence: 'low',
-      label: 'Waiting for a live signal',
+      label: 'Waiting for a current reading',
       summary: 'Start a Watch monitoring session to estimate current physiological arousal.',
       factors: [],
       policy: unavailablePolicy,
@@ -163,7 +163,11 @@ export function estimateArousal(
     level,
     score,
     confidence,
-    label: level === 'elevated' ? 'Elevated arousal estimate' : level === 'mild' ? 'Mild arousal estimate' : 'Near-baseline estimate',
+    label: level === 'elevated'
+      ? 'Higher physiological activation than usual'
+      : level === 'mild'
+        ? 'Slightly more activated than usual'
+        : 'Body signals are near your usual range',
     summary: moving
       ? 'The signal is being interpreted cautiously because movement can raise heart rate.'
       : level === 'elevated'

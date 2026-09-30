@@ -293,6 +293,8 @@ extension HeartRateWorkoutManager: HKWorkoutSessionDelegate {
 
 private final class WatchSignalSender: NSObject, WCSessionDelegate {
     var onReachabilityChanged: ((Bool) -> Void)?
+    private let snapshotLock = NSLock()
+    private var latestSnapshot: [String: Any]?
 
     func activate() {
         guard WCSession.isSupported() else {
@@ -322,6 +324,9 @@ private final class WatchSignalSender: NSObject, WCSessionDelegate {
         ]
         if let bpm { message["bpm"] = bpm }
         if let baselineBPM { message["baselineBPM"] = baselineBPM }
+        snapshotLock.lock()
+        latestSnapshot = message
+        snapshotLock.unlock()
         send(message)
     }
 
@@ -345,7 +350,12 @@ private final class WatchSignalSender: NSObject, WCSessionDelegate {
     private func send(_ message: [String: Any]) {
         guard WCSession.isSupported() else { return }
         if WCSession.default.isReachable {
-            WCSession.default.sendMessage(message, replyHandler: nil, errorHandler: nil)
+            WCSession.default.sendMessage(message, replyHandler: nil) { [weak self] _ in
+                // Reachability can change between the check and transmission.
+                // Keep the newest state available for opportunistic delivery.
+                try? WCSession.default.updateApplicationContext(message)
+                self?.onReachabilityChanged?(WCSession.default.isReachable)
+            }
         } else {
             try? WCSession.default.updateApplicationContext(message)
         }
@@ -361,5 +371,27 @@ private final class WatchSignalSender: NSObject, WCSessionDelegate {
 
     func sessionReachabilityDidChange(_ session: WCSession) {
         onReachabilityChanged?(session.isReachable)
+        guard session.isReachable else { return }
+        snapshotLock.lock()
+        let snapshot = latestSnapshot
+        snapshotLock.unlock()
+        if let snapshot {
+            session.sendMessage(snapshot, replyHandler: nil, errorHandler: nil)
+        }
+    }
+
+    func session(
+        _ session: WCSession,
+        didReceiveMessage message: [String: Any],
+        replyHandler: @escaping ([String: Any]) -> Void
+    ) {
+        guard message["kind"] as? String == "requestSnapshot" else {
+            replyHandler(["available": false])
+            return
+        }
+        snapshotLock.lock()
+        let snapshot = latestSnapshot
+        snapshotLock.unlock()
+        replyHandler(snapshot ?? ["available": false])
     }
 }

@@ -1,5 +1,5 @@
 <script lang="ts">
-  export let name: 'home' | 'history' | 'exercises' | 'archive' | 'profile' | 'heart' | 'calendar' | 'signal' | 'chevron';
+  export let name: 'home' | 'history' | 'exercises' | 'archive' | 'profile' | 'heart' | 'calendar' | 'signal' | 'watch' | 'chevron';
   export let size = 22;
 </script>
 
@@ -20,6 +20,8 @@
     <rect x="3" y="5" width="18" height="16" rx="3"/><path d="M7 3v4M17 3v4M3 10h18"/>
   {:else if name === 'signal'}
     <path d="M3 12h4l2-6 4 12 2-6h6"/>
+  {:else if name === 'watch'}
+    <path d="M8 4.5 9.2 2h5.6L16 4.5M8 19.5 9.2 22h5.6l1.2-2.5"/><rect x="6.5" y="4.5" width="11" height="15" rx="4"/><path d="M12 8v4l2.5 1.5"/>
   {:else}
     <path d="m9 6 6 6-6 6"/>
   {/if}

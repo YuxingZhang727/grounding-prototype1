@@ -33,6 +33,7 @@ export type WatchCheckIn = {
 type WatchSignalNative = {
   isAvailable(): Promise<WatchAvailability>;
   getLatest(): Promise<WatchSignalSnapshot>;
+  requestLatest(): Promise<WatchSignalSnapshot>;
   getCheckIns(): Promise<{ entries: WatchCheckIn[] }>;
   addListener(
     eventName: 'signalUpdate',
@@ -64,6 +65,11 @@ export async function getWatchAvailability(): Promise<WatchAvailability> {
 export async function getLatestWatchSignal(): Promise<WatchSignalSnapshot> {
   if (!isWatchSignalNative()) return { available: false };
   return nativeWatchSignal.getLatest();
+}
+
+export async function requestLatestWatchSignal(): Promise<WatchSignalSnapshot> {
+  if (!isWatchSignalNative()) return { available: false };
+  return nativeWatchSignal.requestLatest();
 }
 
 export async function getWatchCheckIns(): Promise<WatchCheckIn[]> {

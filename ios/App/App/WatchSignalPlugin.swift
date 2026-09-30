@@ -11,6 +11,7 @@ final class WatchSignalPlugin: CAPPlugin, CAPBridgedPlugin {
     let pluginMethods: [CAPPluginMethod] = [
         CAPPluginMethod(name: "isAvailable", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "getLatest", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "requestLatest", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "getCheckIns", returnType: CAPPluginReturnPromise)
     ]
 
@@ -37,6 +38,14 @@ final class WatchSignalPlugin: CAPPlugin, CAPBridgedPlugin {
 
     @objc func getLatest(_ call: CAPPluginCall) {
         call.resolve(receiver.latestSnapshot ?? ["available": false])
+    }
+
+    @objc func requestLatest(_ call: CAPPluginCall) {
+        receiver.requestLatest { snapshot in
+            DispatchQueue.main.async {
+                call.resolve(snapshot ?? ["available": false])
+            }
+        }
     }
 
     @objc func getCheckIns(_ call: CAPPluginCall) {
@@ -85,6 +94,28 @@ private final class WatchSignalReceiver: NSObject, WCSessionDelegate {
         guard WCSession.isSupported() else { return }
         WCSession.default.delegate = self
         WCSession.default.activate()
+    }
+
+    func requestLatest(completion: @escaping ([String: Any]?) -> Void) {
+        guard WCSession.isSupported() else {
+            completion(nil)
+            return
+        }
+        let session = WCSession.default
+        guard session.activationState == .activated, session.isReachable else {
+            completion(latestSnapshot)
+            return
+        }
+        session.sendMessage(
+            ["kind": "requestSnapshot"],
+            replyHandler: { [weak self] message in
+                self?.receive(message)
+                completion(message)
+            },
+            errorHandler: { [weak self] _ in
+                completion(self?.latestSnapshot)
+            }
+        )
     }
 
     private func receive(_ message: [String: Any]) {
