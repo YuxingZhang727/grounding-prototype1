@@ -3,7 +3,7 @@
   import { goto } from '$app/navigation';
   import AppIcon from '$lib/AppIcon.svelte';
   import { deleteRoll, loadRolls, tapeImage, type SoundRoll } from '$lib/sound-tape';
-  import { deleteJournal, deleteSticker, loadJournals, loadStickers, type SavedJournal, type SavedSticker } from '$lib/artifact-store';
+  import { deleteJournal, deleteSticker, loadJournals, loadStickers, saveSticker, type SavedJournal, type SavedSticker } from '$lib/artifact-store';
   import { exportImage, journalFileName } from '$lib/image-export';
   import { estimateArousal, type ArousalEstimate, type InterventionType } from '$lib/arousal-estimator';
   import {
@@ -47,6 +47,9 @@
   let journals: SavedJournal[] = [];
   let exportingJournalId = '';
   let exportNotice = '';
+  let isImportingSticker = false;
+  let stickerImportMessage = '';
+  let stickerImportFailed = false;
   let notice = '';
   type HealthState = 'checking' | 'unavailable' | 'ready' | 'connecting' | 'loading' | 'connected' | 'empty' | 'error';
   const healthMetricDetails: { key: TrendMetric['key']; label: string; unit: string }[] = [
@@ -154,6 +157,64 @@
   async function removeRoll(roll: SoundRoll) { await deleteRoll(roll.id); rolls = rolls.filter(item => item.id !== roll.id); }
   async function removeSticker(sticker: SavedSticker) { await deleteSticker(sticker.id); stickers = stickers.filter(item => item.id !== sticker.id); }
   async function removeJournal(journal: SavedJournal) { await deleteJournal(journal.id); journals = journals.filter(item => item.id !== journal.id); }
+  function readStickerImage(file: File) {
+    return new Promise<{ image:string; aspectRatio:number }>((resolve, reject) => {
+      const source = URL.createObjectURL(file);
+      const image = new Image();
+      image.onload = () => {
+        try {
+          const maxDimension = 1600;
+          const scale = Math.min(1, maxDimension / Math.max(image.naturalWidth, image.naturalHeight, 1));
+          const width = Math.max(1, Math.round(image.naturalWidth * scale));
+          const height = Math.max(1, Math.round(image.naturalHeight * scale));
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const context = canvas.getContext('2d');
+          if (!context) throw new Error('This device could not prepare the sticker image.');
+          context.drawImage(image, 0, 0, width, height);
+          const outputType = file.type === 'image/jpeg' ? 'image/jpeg' : 'image/png';
+          resolve({ image:canvas.toDataURL(outputType, .9), aspectRatio:width / height });
+        } catch (error) {
+          reject(error);
+        } finally {
+          URL.revokeObjectURL(source);
+        }
+      };
+      image.onerror = () => {
+        URL.revokeObjectURL(source);
+        reject(new Error('That image could not be read. Try a PNG, JPG, or WebP file.'));
+      };
+      image.src = source;
+    });
+  }
+  async function importSticker(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file || isImportingSticker) return;
+    isImportingSticker = true;
+    stickerImportMessage = '';
+    stickerImportFailed = false;
+    try {
+      if (!['image/png','image/jpeg','image/webp'].includes(file.type)) {
+        throw new Error('Choose a PNG, JPG, or WebP image.');
+      }
+      if (file.size > 25 * 1024 * 1024) throw new Error('Choose an image smaller than 25 MB.');
+      const prepared = await readStickerImage(file);
+      const name = file.name.replace(/\.[^.]+$/, '').trim().slice(0, 48) || `Imported sticker ${stickers.length + 1}`;
+      const sticker: SavedSticker = { id:crypto.randomUUID(), name, created:Date.now(), ...prepared };
+      await saveSticker(sticker);
+      stickers = [sticker, ...stickers];
+      stickerImportMessage = `${name} was added to your sticker collection.`;
+      navigator.vibrate?.(10);
+    } catch (error) {
+      stickerImportFailed = true;
+      stickerImportMessage = error instanceof Error ? error.message : 'The sticker could not be imported.';
+    } finally {
+      isImportingSticker = false;
+    }
+  }
   async function exportJournal(journal: SavedJournal) {
     if (exportingJournalId) return;
     exportingJournalId = journal.id;
@@ -421,27 +482,39 @@
             </div>
           {/if}
         </section>
-        {#if arousal.factors.length}
-          <details class="estimate-details">
-            <summary><span><strong>How this was estimated</strong><small>{arousal.factors.length} current and historical inputs</small></span><AppIcon name="chevron" size={18}/></summary>
-            <div class="estimate-details-body">
-              {#if watchIsLive() && typeof watchSnapshot.bpm === 'number'}
-                <div class="live-input-row"><span><i aria-hidden="true"></i>Live Watch input</span><strong>{Math.round(watchSnapshot.bpm)} BPM</strong></div>
-              {/if}
+        <section class="estimate-details" aria-labelledby="estimate-details-heading">
+          <header class="estimate-details-header">
+            <div><p class="eyebrow">Signal context</p><h2 id="estimate-details-heading">How this was estimated</h2></div>
+            <span>{arousal.factors.length ? `${arousal.factors.length} inputs` : watchSnapshot.isRunning ? 'Calibrating' : 'Waiting'}</span>
+          </header>
+          <div class="estimate-details-body">
+            {#if watchIsLive() && typeof watchSnapshot.bpm === 'number'}
+              <div class="live-input-row"><span><i aria-hidden="true"></i>Live Watch input</span><strong>{Math.round(watchSnapshot.bpm)} BPM</strong></div>
+            {:else}
+              <div class="live-input-row pending"><span><i aria-hidden="true"></i>Live Watch input</span><strong>Waiting</strong></div>
+            {/if}
+            <div class="estimate-factor-area">
+              {#if arousal.factors.length}
               <ul>
                 {#each arousal.factors.slice(0, 4) as factor}
                   <li><span class:confounded={factor.direction === 'confounded'}>{factor.direction === 'confounded' ? 'Context' : factor.direction === 'supporting' ? 'Adds score' : 'No added score'}</span><p>{factor.label}</p></li>
                 {/each}
               </ul>
-              <div class="estimate-method">
-                <strong>What “near baseline” means in this prototype</strong>
-                <p>The internal rule score is {arousal.score ?? 0}/100: 0–24 is near baseline, 25–49 is a slight shift, and 50–100 is higher activation.</p>
-                <p>The live baseline is the median of the first 5–8 low-motion heart-rate readings in this Watch session. The estimate uses the median of up to five recent live readings to avoid reacting to every one-beat fluctuation. Historical signals use the previous 14 days, excluding the latest reading.</p>
-              </div>
-              <p class="estimate-disclaimer">This is a rule-based estimate of bodily arousal. It cannot determine whether you are anxious or explain why a signal changed.</p>
+              {:else}
+                <div class="estimate-waiting">
+                  <AppIcon name="signal" size={24}/>
+                  <div><strong>{watchSnapshot.isRunning ? 'Building your session baseline' : 'Start a Watch measurement'}</strong><p>{watchSnapshot.isRunning ? 'Keep your wrist relatively still while the first few heart-rate readings arrive.' : 'Live heart rate will appear here and be compared with your recent personal context.'}</p></div>
+                </div>
+              {/if}
             </div>
-          </details>
-        {/if}
+            <div class="estimate-method">
+              <strong>What “near baseline” means in this prototype</strong>
+              <p>The internal rule score is {arousal.score ?? 0}/100: 0–24 is near baseline, 25–49 is a slight shift, and 50–100 is higher activation.</p>
+              <p>The live baseline is the median of the first 5–8 low-motion heart-rate readings in this Watch session. The estimate uses the median of up to five recent live readings to avoid reacting to every one-beat fluctuation. Historical signals use the previous 14 days, excluding the latest reading.</p>
+            </div>
+            <p class="estimate-disclaimer">This is a rule-based estimate of bodily arousal. It cannot determine whether you are anxious or explain why a signal changed.</p>
+          </div>
+        </section>
         <section class:prominent={arousal.policy.prominence === 'high'} class="focus-card">
           <div class="focus-copy">
             <p class="eyebrow">Suggested now · {arousal.policy.intensity}</p>
@@ -543,7 +616,17 @@
         </section>
 
         <section class="collection-section">
-          <div class="collection-heading"><div><p class="eyebrow">Reusable visual pieces</p><h2>Sticker Collection</h2></div><span>{stickers.length}</span></div>
+          <div class="collection-heading">
+            <div><p class="eyebrow">Reusable visual pieces</p><h2>Sticker Collection</h2></div>
+            <div class="collection-actions">
+              <span>{stickers.length}</span>
+              <label class="sticker-upload" class:disabled={isImportingSticker}>
+                {isImportingSticker ? 'Adding…' : 'Upload sticker'}
+                <input type="file" accept="image/png,image/jpeg,image/webp" onchange={importSticker} disabled={isImportingSticker}/>
+              </label>
+            </div>
+          </div>
+          {#if stickerImportMessage}<p class:error={stickerImportFailed} class="sticker-import-message" role={stickerImportFailed ? 'alert' : 'status'}>{stickerImportMessage}</p>{/if}
           {#if stickers.length}
             <div class="artifact-grid sticker-grid">
               {#each stickers as sticker}<article class="artifact"><button class="artifact-delete" onclick={() => removeSticker(sticker)} aria-label={`Delete ${sticker.name}`}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5" /></svg></button><img class="sticker-image" src={sticker.image} alt={sticker.name}/><div><strong>{sticker.name}</strong><span>Saved sticker</span></div></article>{/each}
@@ -644,7 +727,7 @@
   :global(*){box-sizing:border-box} :global(html){background:#f7f1e7} :global(body){margin:0;color:#2f302d;font-family:Manrope,Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;overscroll-behavior:none} :global(button){font:inherit;color:inherit} :global(button:focus-visible),:global(a:focus-visible){outline:2px solid #b9785f;outline-offset:3px}
   .app-shell{--bg:#f7f1e7;--surface:#fffdf9;--cream:#f1e7d6;--border:#ded6c9;--muted:#6f716b;--sun:#efb23e;--sun-soft:#fcecc6;--teal:#ddebe6;--coral:#efc5b5;min-height:100dvh;background:var(--bg);position:relative;overflow:hidden}.app-scroll{height:100dvh;overflow-y:auto;overscroll-behavior-y:contain;scrollbar-width:none;padding:0 max(env(safe-area-inset-right),0px) calc(100px + env(safe-area-inset-bottom)) max(env(safe-area-inset-left),0px)}.app-scroll::-webkit-scrollbar{display:none}.page{width:min(100%,680px);min-height:100%;margin:auto;padding:calc(22px + env(safe-area-inset-top)) 24px 34px}.page-header{min-height:44px;display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}.page-header h1{font-size:28px;line-height:1.2;margin:0;font-weight:750;letter-spacing:-.025em}.eyebrow{text-transform:uppercase;letter-spacing:.11em;font-size:10px;font-weight:650;color:#b26e54;margin:0 0 7px}.avatar{width:32px;height:32px;border-radius:50%;background:radial-gradient(circle at 50% 38%,#fff8df 0 18%,transparent 19%),linear-gradient(145deg,#f0b33f 0 46%,#dcebe6 47%);border:1px solid #d6c8b6}.avatar.large{width:48px;height:48px}
   h2{margin:0}.state-card,.focus-card,.summary-card,.trend-card,.health-card,.profile-card,.settings-list,.session-list{border:1px solid var(--border);background:var(--surface);border-radius:22px}.state-card{padding:18px;display:flex;align-items:center;gap:20px;justify-content:space-between;border-left:5px solid #7aa59d}.state-card>div:first-child{min-width:0}.state-card.unavailable{border-left-color:#bbb3a7}.state-card.mild{border-left-color:var(--sun)}.state-card.elevated{border-left-color:#c46f57}.state-card h2{font-size:19px;margin-bottom:7px}.state-card p:last-child,.focus-card p,.trend-card p,.profile-card p,.archive-hero p{font-size:13px;line-height:1.55;color:var(--muted);margin:0}.watch-source{width:78px;flex:none;display:flex;flex-direction:column;align-items:center;text-align:center;color:var(--muted)}.watch-source>span{position:relative;width:44px;height:44px;display:grid;place-items:center;border-radius:15px;background:var(--cream)}.watch-source i{position:absolute;right:4px;bottom:4px;width:9px;height:9px;border:2px solid var(--surface);border-radius:50%;background:#aaa59d}.watch-source strong{margin-top:6px;font-size:11px}.watch-source small{margin-top:2px;font-size:9px}.watch-source.active{color:#355f59}.watch-source.active>span{background:var(--teal)}.watch-source.active i{background:#3f9187}.watch-source.delayed i{background:#d4982d}.focus-card{margin-top:14px;padding:21px;background:var(--coral);border:0;display:grid;grid-template-columns:1fr 110px;min-height:220px;overflow:hidden}.focus-card.prominent{box-shadow:inset 5px 0 0 #b65f49}.focus-copy{position:relative;z-index:2}.focus-card h2{font-size:23px;line-height:1.2;margin:5px 0 9px}.primary{min-height:52px;padding:0 20px;border:0;border-radius:16px;background:var(--sun);font-weight:700;cursor:pointer;touch-action:manipulation}.primary:active{opacity:.72}.primary:disabled{cursor:default;opacity:.55}.focus-card .primary{margin-top:17px}.policy-meta{display:flex;flex-wrap:wrap;gap:7px;margin-top:13px}.policy-meta span{padding:6px 8px;border-radius:999px;background:#fffdf980;font-size:9px;font-weight:700;text-transform:capitalize;color:#655f58}.paper-motif{position:relative;min-height:130px}.paper-motif i,.paper-motif b{position:absolute;display:block;width:82px;height:72px;border-radius:18px;transform:rotate(8deg);background:var(--sun-soft);top:35px;left:0}.paper-motif i:nth-child(2){background:var(--teal);transform:rotate(-8deg);left:35px;top:20px}.paper-motif b{width:45px;height:45px;border-radius:50%;background:var(--sun);left:70px;top:63px}.section-title{display:flex;align-items:center;justify-content:space-between;margin:26px 0 10px}.section-title h2,.list-heading{font-size:17px}.section-title button{border:0;background:none;color:var(--muted);font-size:12px}.task-list,.session-list,.settings-list{overflow:hidden}.task-list article,.session-list article,.settings-list article{min-height:67px;padding:12px 15px;display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--border)}.task-list article:last-child,.session-list article:last-child,.settings-list article:last-child{border:0}.task-list div,.session-list div,.settings-list div{display:flex;flex:1;flex-direction:column;gap:3px}.task-list span,.session-list small,.settings-list small,.settings-list article>span{font-size:11px;color:var(--muted)}
-  .estimate-details{margin-top:12px;border:1px solid var(--border);border-radius:18px;background:var(--surface);overflow:hidden}.estimate-details summary{min-height:58px;padding:10px 15px;display:flex;align-items:center;justify-content:space-between;gap:12px;cursor:pointer;list-style:none}.estimate-details summary::-webkit-details-marker{display:none}.estimate-details summary>span{display:flex;flex-direction:column;gap:3px}.estimate-details summary strong{font-size:12px}.estimate-details summary small{font-size:10px;color:var(--muted)}.estimate-details summary :global(svg){transition:transform .2s ease}.estimate-details[open] summary :global(svg){transform:rotate(90deg)}.estimate-details-body{padding:0 15px 15px;border-top:1px solid var(--border)}.live-input-row{min-height:48px;margin:12px 0 0;padding:0 12px;border-radius:13px;background:var(--teal);display:flex;align-items:center;justify-content:space-between;gap:12px}.live-input-row span{display:flex;align-items:center;gap:7px;font-size:10px;color:#466b64}.live-input-row i{width:7px;height:7px;border-radius:50%;background:#3f9187;box-shadow:0 0 0 4px #7fbbb233}.live-input-row strong{font-size:14px;font-variant-numeric:tabular-nums}.estimate-details ul{display:grid;gap:9px;margin:14px 0 0;padding:0;list-style:none}.estimate-details li{display:grid;grid-template-columns:84px 1fr;gap:10px;align-items:start}.estimate-details li>span{padding:5px 7px;border-radius:9px;background:var(--teal);font-size:9px;font-weight:700;text-align:center}.estimate-details li>span.confounded{background:var(--sun-soft)}.estimate-details li p{margin:2px 0 0;font-size:11px;line-height:1.45;color:var(--muted)}.estimate-method{margin-top:14px;padding:13px;border-radius:14px;background:var(--cream)}.estimate-method strong{font-size:11px}.estimate-method p{margin:6px 0 0;font-size:10px;line-height:1.5;color:var(--muted)}.estimate-disclaimer{margin:15px 0 0;padding-top:13px;border-top:1px solid var(--border);font-size:10px;line-height:1.5;color:var(--muted)}
+  .estimate-details{min-height:430px;margin-top:12px;padding:17px;border:1px solid var(--border);border-radius:22px;background:var(--surface);overflow:hidden}.estimate-details-header{min-height:45px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.estimate-details-header .eyebrow{margin-bottom:4px}.estimate-details-header h2{font-size:17px}.estimate-details-header>span{flex:none;padding:6px 9px;border-radius:999px;background:var(--cream);font-size:10px;font-weight:700;color:var(--muted)}.estimate-details-body{padding-top:2px}.live-input-row{min-height:48px;margin:12px 0 0;padding:0 12px;border-radius:13px;background:var(--teal);display:flex;align-items:center;justify-content:space-between;gap:12px}.live-input-row.pending{background:var(--cream)}.live-input-row span{display:flex;align-items:center;gap:7px;font-size:10px;color:#466b64}.live-input-row i{width:7px;height:7px;border-radius:50%;background:#3f9187;box-shadow:0 0 0 4px #7fbbb233}.live-input-row.pending i{background:#aaa59d;box-shadow:none}.live-input-row strong{min-width:78px;text-align:right;font-size:14px;font-variant-numeric:tabular-nums}.estimate-factor-area{min-height:176px}.estimate-details ul{display:grid;gap:9px;margin:14px 0 0;padding:0;list-style:none}.estimate-details li{display:grid;grid-template-columns:84px 1fr;gap:10px;align-items:start}.estimate-details li>span{padding:5px 7px;border-radius:9px;background:var(--teal);font-size:9px;font-weight:700;text-align:center}.estimate-details li>span.confounded{background:var(--sun-soft)}.estimate-details li p{margin:2px 0 0;font-size:11px;line-height:1.45;color:var(--muted)}.estimate-waiting{min-height:176px;display:flex;align-items:center;justify-content:center;gap:12px;color:#6a8f87}.estimate-waiting>div{max-width:270px}.estimate-waiting strong{font-size:12px;color:#2f302d}.estimate-waiting p{margin:5px 0 0;font-size:10px;line-height:1.5;color:var(--muted)}.estimate-method{padding:13px;border-radius:14px;background:var(--cream)}.estimate-method strong{font-size:11px}.estimate-method p{margin:6px 0 0;font-size:10px;line-height:1.5;color:var(--muted)}.estimate-disclaimer{margin:15px 0 0;padding-top:13px;border-top:1px solid var(--border);font-size:10px;line-height:1.5;color:var(--muted)}
   .summary-card{display:grid;grid-template-columns:repeat(3,1fr);padding:16px;margin-bottom:14px}.summary-card div{display:flex;flex-direction:column;gap:3px;padding:5px 10px;border-right:1px solid var(--border)}.summary-card div:last-child{border:0}.summary-card strong{font-size:24px}.summary-card span{font-size:10px;color:var(--muted)}.trend-card{padding:18px}.trend-card .section-title{margin:0 0 18px}.trend-card .section-title span{font-size:11px;color:var(--muted)}.bars{height:105px;display:flex;gap:13px;align-items:end;border-bottom:1px solid var(--border);margin-bottom:18px}.bars i{display:block;position:relative;width:28px;max-height:90px;border-radius:9px 9px 0 0;background:#c9ddb8}.bars i:nth-child(3){background:#efc5b5}.bars span{position:absolute;bottom:-17px;width:100%;text-align:center;font:10px/1 Manrope;color:var(--muted)}.list-heading{margin:24px 0 10px}.method-dot{width:34px;height:34px;border-radius:12px;background:var(--coral)}.method-dot.breathing{background:#c8dde8}
   .health-card{margin-top:14px;padding:18px}.health-card-header{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}.health-title{display:flex;align-items:center;gap:11px}.health-title .eyebrow{margin-bottom:4px}.health-title h2{font-size:18px}.health-icon{width:42px;height:42px;flex:none;border-radius:14px;display:grid;place-items:center;background:var(--coral);color:#844f43}.health-status{flex:none;padding:7px 9px;border-radius:999px;background:var(--cream);color:var(--muted);font-size:10px;font-weight:700}.health-status.active{background:var(--teal);color:#355f59}.health-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:18px}.health-grid>button{min-width:0;min-height:154px;padding:14px;border:0;border-radius:17px;background:#f7f1e7;text-align:left;cursor:pointer;display:flex;flex-direction:column;align-items:stretch}.health-grid>button:active{opacity:.72}.health-grid>button.unavailable{background:#f5f2ec;opacity:.72}.health-grid>button>span:first-child{display:block;min-height:30px;font-size:11px;line-height:1.35;color:var(--muted)}.health-grid>button>div{display:flex;align-items:baseline;gap:5px;margin-top:6px}.health-grid strong{font-size:25px;line-height:1}.health-grid small{font-size:10px;color:var(--muted)}.health-grid>button>p{min-height:32px;margin:9px 0 0;font-size:10px;line-height:1.45;color:var(--muted)}.health-grid .view-history{min-height:auto!important;margin-top:auto;padding-top:10px;display:flex!important;align-items:center;justify-content:flex-end;gap:3px;color:#466b64!important;font-size:9px!important;font-weight:700}.health-card-footer{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin-top:14px;padding-top:13px;border-top:1px solid var(--border)}.health-card-footer p{max-width:380px;margin:0;font-size:10px;line-height:1.45;color:var(--muted)}.health-card-footer span{flex:none;font-size:9px;line-height:1.4;color:var(--muted);text-align:right}.health-empty{min-height:132px;margin-top:18px;padding:22px;border-radius:18px;display:flex;flex-direction:column;align-items:flex-start;justify-content:center;background:#f7f1e7}.health-empty strong{font-size:14px}.health-empty p{margin:7px 0 0;font-size:12px;line-height:1.5;color:var(--muted)}.health-empty.loading{align-items:center;text-align:center}.loading-dot{width:22px;height:22px;margin-bottom:12px;border:3px solid #d8ccbd;border-top-color:#b26e54;border-radius:50%;animation:health-spin .8s linear infinite}.health-actions{display:flex;justify-content:flex-end;margin-top:13px}.secondary{min-height:44px;padding:0 15px;border:1px solid var(--border);border-radius:14px;background:var(--surface);font-size:12px;font-weight:700;cursor:pointer}.secondary:active,.settings-row:active,.text-button:active{opacity:.66}.sr-status{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}@keyframes health-spin{to{transform:rotate(360deg)}}
   .watch-checkins{margin:0 0 14px;padding:18px;border:1px solid var(--border);border-radius:22px;background:var(--surface)}.watch-checkins .section-title{margin:0 0 12px}.watch-checkins .section-title>div{display:block}.watch-checkins .section-title>span{min-width:30px;height:30px;border-radius:15px;background:var(--teal);display:grid;place-items:center;font-size:11px;font-weight:700}.watch-checkin-list{overflow:hidden;border:1px solid var(--border);border-radius:17px}.watch-checkin-list article{min-height:62px;padding:10px 13px;display:flex;align-items:center;gap:13px;border-bottom:1px solid var(--border)}.watch-checkin-list article:last-child{border:0}.watch-checkin-list article>strong{width:38px;height:38px;border-radius:14px;background:var(--sun-soft);display:grid;place-items:center;font-size:19px}.watch-checkin-list article>div{display:flex;flex-direction:column;gap:3px}.watch-checkin-list span{font-size:12px;font-weight:700}.watch-checkin-list small{font-size:10px;color:var(--muted)}
@@ -655,6 +738,7 @@
   .journal-export{min-height:44px;margin-top:8px;padding:0 12px;border:1px solid var(--border);border-radius:12px;background:var(--cream);color:var(--ink);font:inherit;font-size:11px;font-weight:700;cursor:pointer}.journal-export:active{opacity:.66}.journal-export:disabled{cursor:default;opacity:.5}.export-notice{margin:12px 0 0;padding:11px 13px;border-radius:14px;background:#e3efea;color:#355f59;font-size:12px;line-height:1.45}
   .artifact-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.artifact{min-width:0;border:1px solid var(--border);border-radius:20px;overflow:hidden;background:var(--surface);position:relative}.artifact>img{display:block;width:100%;height:130px;object-fit:cover}.artifact>img.sticker-image{object-fit:contain;padding:12px;background:#f5eee3}.artifact>div{padding:13px;display:flex;flex-direction:column;gap:4px}.tape-grid{grid-template-columns:1fr}.tape-artifact>img{height:96px;padding:18px 16px;object-fit:contain;background:#f5eee3}
   .artifact-delete{position:absolute;z-index:2;right:8px;top:8px;width:44px;height:44px;padding:0;border:0;border-radius:50%;display:grid;place-items:center;background:#fffdf9ed;color:#934235;box-shadow:0 2px 8px #2f302d20;cursor:pointer}.artifact-delete svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}.artifact-delete:active{opacity:.68}.empty{padding:30px;text-align:center}.empty .paper-motif{width:130px;margin:auto}.empty h2{font-size:19px}.empty p{font-size:13px;line-height:1.5;color:var(--muted)}.profile-card{padding:19px}.profile-card h2{font-size:19px;margin-bottom:4px}.setting-icon{width:24px;text-align:center;color:#6b7e77}.status-dot{display:block;width:10px!important;height:10px;border-radius:50%;background:#4f9e95}.settings-row{width:100%;min-height:68px;padding:12px 15px;border:0;background:transparent;display:flex;align-items:center;gap:12px;text-align:left;cursor:pointer}.settings-row>div{display:flex;flex:1;flex-direction:column;gap:3px}.settings-row small{font-size:11px;color:var(--muted)}.row-end{display:flex;align-items:center;gap:10px;color:var(--muted)}.health-permission-card{scroll-margin-block:calc(22px + env(safe-area-inset-top)) 120px;margin-top:12px;padding:20px;border-radius:22px;background:var(--teal);border:1px solid #c8ddd5}.permission-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.permission-heading h2{font-size:20px}.text-button{min-height:44px;padding:0 10px;border:0;background:transparent;color:#466b64;font-size:12px;font-weight:700;cursor:pointer}.health-permission-card>p{margin:14px 0 0;font-size:13px;line-height:1.55;color:#52645f}.health-permission-card ul{display:grid;grid-template-columns:1fr 1fr;gap:8px 14px;margin:17px 0;padding:0;list-style:none}.health-permission-card li{position:relative;padding-left:16px;font-size:12px;line-height:1.45}.health-permission-card li::before{content:'';position:absolute;left:0;top:.42em;width:7px;height:7px;border-radius:50%;background:#efb23e}.privacy-note{display:flex;gap:11px;padding:14px;border-radius:16px;background:#fffdf9b8}.privacy-note :global(svg){flex:none;color:#8a5548}.privacy-note p{display:flex;flex-direction:column;gap:4px;margin:0}.privacy-note strong{font-size:12px}.privacy-note span{font-size:11px;line-height:1.45;color:var(--muted)}.health-permission-card .permission-status{min-height:37px;margin-top:13px;font-size:11px}.permission-action{width:100%;margin-top:10px}
+  .collection-actions{display:flex;align-items:center;gap:8px}.collection-actions>span{min-width:30px;height:30px;border-radius:15px;background:var(--cream);display:grid;place-items:center;font-size:11px;font-weight:700}.sticker-upload{position:relative;min-height:44px;padding:0 14px;border:1px solid var(--border);border-radius:14px;background:var(--surface);display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;cursor:pointer;touch-action:manipulation}.sticker-upload:active{opacity:.66}.sticker-upload.disabled{cursor:default;opacity:.55}.sticker-upload input{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}.sticker-import-message{margin:10px 0 12px;padding:10px 12px;border-radius:13px;background:#e3efea;color:#355f59;font-size:11px;line-height:1.45}.sticker-import-message.error{background:#f7e2dc;color:#873e34}
   .health-detail-layer{position:fixed;z-index:90;inset:0;display:flex;align-items:flex-end;justify-content:center}.health-detail-scrim{position:absolute;inset:0;width:100%;height:100%;padding:0;border:0;background:rgba(42,38,34,.46);cursor:pointer}.health-detail-sheet{position:relative;width:min(100%,620px);max-height:min(88dvh,760px);padding:10px 22px calc(26px + env(safe-area-inset-bottom));border-radius:28px 28px 0 0;background:var(--surface);overflow-y:auto;box-shadow:0 -12px 40px rgba(45,40,35,.16)}.health-detail-handle{width:38px;height:4px;margin:0 auto 13px;border-radius:999px;background:#c9c1b6}.health-detail-sheet header{display:flex;align-items:flex-start;justify-content:space-between;gap:18px}.health-detail-sheet header h2{font-size:23px;line-height:1.2}.health-detail-close{width:44px;height:44px;flex:none;padding:0;border:1px solid var(--border);border-radius:50%;background:var(--surface);font-size:26px;line-height:1;cursor:pointer}.health-detail-summary{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:18px}.health-detail-summary>div{padding:14px;border-radius:17px;background:var(--cream)}.health-detail-summary span{display:block;font-size:10px;color:var(--muted)}.health-detail-summary strong{display:inline-block;margin-top:8px;font-size:25px;font-variant-numeric:tabular-nums}.health-detail-summary small{margin-left:5px;font-size:9px;color:var(--muted)}.health-line-chart{position:relative;margin-top:18px;padding:9px 8px 0 30px;border:1px solid var(--border);border-radius:18px;background:#faf7f1}.health-line-chart svg{display:block;width:100%;height:150px;overflow:visible}.health-line-chart polyline{fill:none;stroke:#4f827b;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}.health-line-chart circle{fill:var(--sun);stroke:#fffdf9;stroke-width:3}.health-line-chart .chart-grid{fill:none;stroke:#ded6c9;stroke-width:1}.health-line-chart .chart-baseline{fill:none;stroke:#b26e54;stroke-width:1.5;stroke-dasharray:5 5}.chart-scale{position:absolute;left:7px;top:19px;bottom:30px;display:flex;flex-direction:column;justify-content:space-between;font-size:8px;color:var(--muted)}.chart-dates{display:flex;justify-content:space-between;padding:0 4px 10px;font-size:9px;color:var(--muted)}.health-chart-summary{margin:9px 2px 0;font-size:11px;line-height:1.5;color:var(--muted)}.health-source-note{margin-top:17px;padding:14px;border-radius:17px;background:var(--teal)}.health-source-note strong,.health-reading-list>strong{font-size:12px}.health-source-note p{margin:5px 0 0;font-size:11px;line-height:1.5;color:#52645f}.health-reading-list{margin-top:17px}.health-reading-list>div{min-height:38px;display:flex;align-items:center;justify-content:space-between;gap:12px;border-bottom:1px solid var(--border);font-size:11px}.health-reading-list>div span:last-child{font-weight:700;font-variant-numeric:tabular-nums}
   .bottom-nav{position:fixed;z-index:20;left:max(24px,env(safe-area-inset-left));right:max(24px,env(safe-area-inset-right));bottom:max(16px,env(safe-area-inset-bottom));max-width:640px;margin:auto;height:72px;padding:10px 12px;display:flex;align-items:center;justify-content:space-between;border-radius:24px;background:rgba(241,231,214,.96);box-shadow:0 8px 24px rgba(45,40,35,.1);backdrop-filter:blur(16px)}.bottom-nav button{width:58px;height:52px;border:0;border-radius:18px;background:none;color:#72766f;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;cursor:pointer}.bottom-nav button.active{background:var(--sun-soft);color:#2f302d}.bottom-nav span{font-size:9px}.desktop-rail{display:none}
   @media(max-width:374px){.page{padding-inline:18px}.focus-card{grid-template-columns:1fr 80px}.state-card{gap:10px}.watch-source{width:68px}.method-grid{gap:12px}.method-grid button{min-height:145px}.summary-card span{font-size:9px}.bottom-nav{left:12px;right:12px}.bottom-nav button{width:52px}.artifact-grid,.journal-grid,.health-grid{grid-template-columns:1fr}.health-card-header{align-items:flex-start}.health-status{max-width:92px;text-align:center}.health-permission-card ul{grid-template-columns:1fr}.health-detail-sheet{padding-inline:18px}.health-detail-summary{grid-template-columns:1fr}}
