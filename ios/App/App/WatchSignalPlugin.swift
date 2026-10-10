@@ -1,5 +1,6 @@
 import Capacitor
 import Foundation
+import HealthKit
 import WatchConnectivity
 
 /// Receives live sensor snapshots and self-reported check-ins from the
@@ -12,6 +13,8 @@ final class WatchSignalPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "isAvailable", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "getLatest", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "requestLatest", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "startMeasurement", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "stopMeasurement", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "getCheckIns", returnType: CAPPluginReturnPromise)
     ]
 
@@ -50,6 +53,30 @@ final class WatchSignalPlugin: CAPPlugin, CAPBridgedPlugin {
 
     @objc func getCheckIns(_ call: CAPPluginCall) {
         call.resolve(["entries": receiver.checkIns])
+    }
+
+    /// Uses HealthKit's supported companion-app path to wake the Watch app.
+    /// The Watch receives this configuration in its application delegate and
+    /// creates the actual HKWorkoutSession there.
+    @objc func startMeasurement(_ call: CAPPluginCall) {
+        let configuration = HKWorkoutConfiguration()
+        configuration.activityType = .mindAndBody
+        configuration.locationType = .indoor
+        HKHealthStore().startWatchApp(with: configuration) { success, error in
+            DispatchQueue.main.async {
+                if success {
+                    call.resolve(["started": true])
+                } else {
+                    call.reject(error?.localizedDescription ?? "Apple Watch could not be opened.")
+                }
+            }
+        }
+    }
+
+    @objc func stopMeasurement(_ call: CAPPluginCall) {
+        receiver.sendCommand("stopMeasurement") { delivered in
+            DispatchQueue.main.async { call.resolve(["delivered": delivered]) }
+        }
     }
 }
 
@@ -117,6 +144,27 @@ private final class WatchSignalReceiver: NSObject, WCSessionDelegate {
                 completion(self?.latestSnapshot)
             }
         )
+    }
+
+    func sendCommand(_ command: String, completion: @escaping (Bool) -> Void) {
+        guard WCSession.isSupported() else {
+            completion(false)
+            return
+        }
+        let session = WCSession.default
+        let message: [String: Any] = ["kind": "measurementCommand", "command": command]
+        if session.activationState == .activated, session.isReachable {
+            session.sendMessage(message, replyHandler: { reply in
+                completion(reply["accepted"] as? Bool ?? true)
+            }, errorHandler: { _ in completion(false) })
+        } else {
+            do {
+                try session.updateApplicationContext(message)
+                completion(true)
+            } catch {
+                completion(false)
+            }
+        }
     }
 
     private func receive(_ message: [String: Any]) {

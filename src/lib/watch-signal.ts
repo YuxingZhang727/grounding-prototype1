@@ -38,6 +38,8 @@ type WatchSignalNative = {
   isAvailable(): Promise<WatchAvailability>;
   getLatest(): Promise<WatchSignalSnapshot>;
   requestLatest(): Promise<WatchSignalSnapshot>;
+  startMeasurement(): Promise<{ started: boolean }>;
+  stopMeasurement(): Promise<{ delivered: boolean }>;
   getCheckIns(): Promise<{ entries: WatchCheckIn[] }>;
   addListener(
     eventName: 'signalUpdate',
@@ -74,6 +76,18 @@ export async function getLatestWatchSignal(): Promise<WatchSignalSnapshot> {
 export async function requestLatestWatchSignal(): Promise<WatchSignalSnapshot> {
   if (!isWatchSignalNative()) return { available: false };
   return nativeWatchSignal.requestLatest();
+}
+
+export async function startWatchMeasurement(): Promise<boolean> {
+  if (!isWatchSignalNative()) return false;
+  const result = await nativeWatchSignal.startMeasurement();
+  return result.started;
+}
+
+export async function stopWatchMeasurement(): Promise<boolean> {
+  if (!isWatchSignalNative()) return false;
+  const result = await nativeWatchSignal.stopMeasurement();
+  return result.delivered;
 }
 
 export async function getWatchCheckIns(): Promise<WatchCheckIn[]> {

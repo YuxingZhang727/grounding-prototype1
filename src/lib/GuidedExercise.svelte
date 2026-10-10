@@ -1,5 +1,14 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
+  import {
+    getLatestWatchSignal,
+    getWatchAvailability,
+    isWatchSignalNative,
+    onWatchSignal,
+    startWatchMeasurement,
+    stopWatchMeasurement,
+    type WatchSignalSnapshot
+  } from '$lib/watch-signal';
 
   export let mode: 'breathing' | 'mindfulness' | 'grounding';
 
@@ -42,7 +51,7 @@
     { count:1, sense:'taste', title:'Notice one taste.', hint:'Name one thing you can taste—or would like to taste.' }
   ];
 
-  type Screen = 'intro' | 'practice' | 'complete';
+  type Screen = 'intro' | 'preparing' | 'practice' | 'recovery' | 'complete';
   let screen: Screen = 'intro';
   let isRunning = false;
   let breathPhase = 0;
@@ -53,6 +62,16 @@
   let note = '';
   let groundingAnswers: string[][] = groundingSteps.map(() => []);
   let timer: ReturnType<typeof setInterval> | undefined;
+  let watchListener: { remove: () => Promise<void> } | null = null;
+  let watchSnapshot: WatchSignalSnapshot = { available:false };
+  let measurementStage: 'idle' | 'pre' | 'recovery' | 'done' | 'unavailable' = 'idle';
+  let measurementMessage = '';
+  let preSamples: number[] = [];
+  let postSamples: number[] = [];
+  let lastMeasurementTimestamp = '';
+  let preRating = 5;
+  let postRating = 5;
+  let measurementResult: { preBPM:number | null; postBPM:number | null; bpmChange:number | null; feelingChange:number } | null = null;
 
   $: config = configs[mode];
   $: breathInstruction = ['Breathe in', 'Hold gently', 'Breathe out'][breathPhase];
@@ -62,8 +81,55 @@
     : mode === 'mindfulness'
       ? (mindfulnessStep + 1) / mindfulnessPrompts.length * 100
       : (groundingStep + 1) / groundingSteps.length * 100;
+  $: preBPM = median(preSamples) ?? watchSnapshot.baselineBPM ?? null;
+  $: postBPM = median(postSamples);
 
-  function begin() {
+  function median(values: number[]) {
+    if (!values.length) return null;
+    const ordered = [...values].sort((a, b) => a - b);
+    return ordered[Math.floor(ordered.length / 2)];
+  }
+
+  function acceptMeasurement(snapshot: WatchSignalSnapshot) {
+    watchSnapshot = { ...watchSnapshot, ...snapshot, bpm:snapshot.bpm ?? snapshot.heartRateBPM ?? watchSnapshot.bpm };
+    const bpm = Number(snapshot.bpm ?? snapshot.heartRateBPM ?? snapshot.bpmText);
+    if (!snapshot.isRunning || !Number.isFinite(bpm) || snapshot.timestamp === lastMeasurementTimestamp) return;
+    lastMeasurementTimestamp = snapshot.timestamp ?? `${Date.now()}`;
+    if (measurementStage === 'pre') preSamples = [...preSamples.slice(-9), bpm];
+    if (measurementStage === 'recovery') postSamples = [...postSamples.slice(-9), bpm];
+  }
+
+  async function prepareMeasurement() {
+    if (!isWatchSignalNative()) {
+      measurementStage = 'unavailable';
+      beginPractice();
+      return;
+    }
+    screen = 'preparing';
+    measurementStage = 'pre';
+    measurementMessage = 'Opening Grounding on your Apple Watch…';
+    preSamples = [];
+    postSamples = [];
+    lastMeasurementTimestamp = '';
+    try {
+      const availability = await getWatchAvailability();
+      if (!availability.paired || !availability.watchAppInstalled) {
+        measurementStage = 'unavailable';
+        measurementMessage = availability.paired ? 'Install the Grounding Watch app to add a before-and-after measurement.' : 'A paired Apple Watch was not found.';
+        return;
+      }
+      watchListener ??= await onWatchSignal(acceptMeasurement);
+      const latest = await getLatestWatchSignal();
+      if (latest.isRunning) acceptMeasurement(latest);
+      if (!latest.isRunning) await startWatchMeasurement();
+      measurementMessage = 'Keep your wrist relaxed while the Watch collects a short baseline.';
+    } catch (error) {
+      measurementStage = 'unavailable';
+      measurementMessage = error instanceof Error ? error.message : 'The Watch measurement could not start.';
+    }
+  }
+
+  function beginPractice() {
     screen = 'practice';
     if (mode === 'breathing') startBreathing();
     requestAnimationFrame(() => document.querySelector<HTMLElement>('.practice-card h1')?.focus());
@@ -135,11 +201,31 @@
     if (timer) clearInterval(timer);
     timer = undefined;
     isRunning = false;
+    if (measurementStage === 'pre' && watchSnapshot.isRunning) {
+      measurementStage = 'recovery';
+      postSamples = [];
+      lastMeasurementTimestamp = '';
+    }
+    screen = 'recovery';
+    requestAnimationFrame(() => document.querySelector<HTMLElement>('.recovery h1')?.focus());
+  }
+
+  async function completeSession() {
+    const before = preBPM;
+    const after = postBPM;
+    measurementResult = {
+      preBPM:before,
+      postBPM:after,
+      bpmChange:before !== null && after !== null ? after - before : null,
+      feelingChange:postRating - preRating
+    };
+    if (measurementStage === 'recovery') await stopWatchMeasurement().catch(() => false);
+    measurementStage = 'done';
     screen = 'complete';
     navigator.vibrate?.(16);
     try {
       const sessions = JSON.parse(localStorage.getItem('grounding.guidedSessions') || '[]');
-      sessions.unshift({ mode, completedAt:Date.now() });
+      sessions.unshift({ mode, completedAt:Date.now(), preRating, postRating, ...measurementResult });
       localStorage.setItem('grounding.guidedSessions', JSON.stringify(sessions.slice(0, 30)));
     } catch { /* Completion should never depend on storage. */ }
     requestAnimationFrame(() => document.querySelector<HTMLElement>('.completion h1')?.focus());
@@ -155,9 +241,21 @@
     groundingStep = 0;
     groundingAnswers = groundingSteps.map(() => []);
     note = '';
+    measurementStage = 'idle';
+    measurementMessage = '';
+    watchSnapshot = { available:false };
+    preSamples = [];
+    postSamples = [];
+    preRating = 5;
+    postRating = 5;
+    measurementResult = null;
   }
 
-  onDestroy(() => { if (timer) clearInterval(timer); });
+  onDestroy(() => {
+    if (timer) clearInterval(timer);
+    if (measurementStage === 'pre' || measurementStage === 'recovery') void stopWatchMeasurement();
+    void watchListener?.remove();
+  });
 </script>
 
 <svelte:head>
@@ -184,7 +282,12 @@
           <span><b aria-hidden="true">○</b> No score</span>
           <span><b aria-hidden="true">◷</b> Stop anytime</span>
         </div>
-        <button class="primary" onclick={begin}>Begin practice <span aria-hidden="true">→</span></button>
+        <label class="feeling-scale" for="before-feeling">
+          <span><strong>How activated do you feel?</strong><b>{preRating}/10</b></span>
+          <input id="before-feeling" type="range" min="0" max="10" step="1" bind:value={preRating} />
+          <small><span>Settled</span><span>Very activated</span></small>
+        </label>
+        <button class="primary" onclick={prepareMeasurement}>Begin with Watch measurement <span aria-hidden="true">→</span></button>
       </div>
 
       <div class:breath-visual={mode === 'breathing'} class:mindful-visual={mode === 'mindfulness'} class:senses-visual={mode === 'grounding'} class="hero-visual" aria-hidden="true">
@@ -196,6 +299,26 @@
           {#each [5,4,3,2,1] as count}<i>{count}</i>{/each}
         {/if}
       </div>
+    </section>
+
+  {:else if screen === 'preparing'}
+    <section class="measurement-stage" aria-labelledby="measurement-heading">
+      <div class="watch-pulse" class:connected={watchSnapshot.isRunning} aria-hidden="true">
+        <svg viewBox="0 0 24 24"><rect x="6" y="4" width="12" height="16" rx="4"/><path d="M9 1h6M9 23h6"/><path d="M9 12h2l1-3 2 6 1-3h1"/></svg>
+      </div>
+      <p class="eyebrow">Before the practice</p>
+      <h1 id="measurement-heading" tabindex="-1">Let’s capture your starting point.</h1>
+      <p>{measurementMessage}</p>
+      {#if measurementStage === 'pre'}
+        <div class="measurement-reading" aria-live="polite">
+          <span>Live heart rate</span>
+          <strong>{typeof watchSnapshot.bpm === 'number' ? Math.round(watchSnapshot.bpm) : '—'} <small>BPM</small></strong>
+          <div><i style={`width:${Math.min(100, preSamples.length / 5 * 100)}%`}></i></div>
+          <small>{preSamples.length >= 5 ? 'Starting point ready' : `${Math.min(preSamples.length, 5)} of 5 readings`}</small>
+        </div>
+        <button class="primary" disabled={preSamples.length < 3 && typeof watchSnapshot.baselineBPM !== 'number'} onclick={beginPractice}>Start the practice <span aria-hidden="true">→</span></button>
+      {/if}
+      <button class="text-action" onclick={beginPractice}>{measurementStage === 'unavailable' ? 'Continue without Watch' : 'Skip measurement'}</button>
     </section>
 
   {:else if screen === 'practice'}
@@ -259,12 +382,40 @@
       {/if}
     </section>
 
+  {:else if screen === 'recovery'}
+    <section class="measurement-stage recovery" aria-labelledby="recovery-heading">
+      <div class="watch-pulse connected" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><rect x="6" y="4" width="12" height="16" rx="4"/><path d="M9 1h6M9 23h6"/><path d="M9 12h2l1-3 2 6 1-3h1"/></svg>
+      </div>
+      <p class="eyebrow">After the practice</p>
+      <h1 id="recovery-heading" tabindex="-1">Notice what changed.</h1>
+      <p>{measurementStage === 'recovery' ? 'Stay still for a few moments while your Watch captures a recovery reading.' : 'Add one more check-in so you can compare how the practice felt.'}</p>
+      <div class="comparison-preview">
+        <div><span>Before</span><strong>{preBPM === null ? '—' : Math.round(preBPM)} <small>BPM</small></strong></div>
+        <div><span>After</span><strong>{postBPM === null ? '—' : Math.round(postBPM)} <small>BPM</small></strong></div>
+      </div>
+      <label class="feeling-scale recovery-scale" for="after-feeling">
+        <span><strong>How activated do you feel now?</strong><b>{postRating}/10</b></span>
+        <input id="after-feeling" type="range" min="0" max="10" step="1" bind:value={postRating} />
+        <small><span>Settled</span><span>Very activated</span></small>
+      </label>
+      <button class="primary" onclick={completeSession}>{postSamples.length >= 3 ? 'See comparison' : 'Finish when ready'} <span aria-hidden="true">→</span></button>
+      <small class="reading-count" aria-live="polite">{Math.min(postSamples.length, 5)} of 5 recovery readings</small>
+    </section>
+
   {:else}
     <section class="completion">
       <div class="completion-mark" aria-hidden="true"><svg viewBox="0 0 40 40"><path d="m11 21 6 6 13-15"/></svg></div>
       <p class="eyebrow">Practice complete</p>
       <h1 tabindex="-1">You made a little room.</h1>
       <p>Notice what feels the same and what feels even slightly different. Both answers are okay.</p>
+      {#if measurementResult}
+        <div class="result-card">
+          <div><span>Body signal</span><strong>{measurementResult.bpmChange === null ? 'Not measured' : `${measurementResult.bpmChange > 0 ? '+' : ''}${Math.round(measurementResult.bpmChange)} BPM`}</strong><small>{measurementResult.bpmChange === null ? 'No Watch comparison was available.' : 'Median recovery heart rate compared with the starting median.'}</small></div>
+          <div><span>Your check-in</span><strong>{measurementResult.feelingChange > 0 ? '+' : ''}{measurementResult.feelingChange} points</strong><small>{preRating}/10 before · {postRating}/10 after</small></div>
+        </div>
+        <p class="result-note">A lower number can suggest settling, but one short session cannot diagnose anxiety or prove that an exercise caused the change.</p>
+      {/if}
       <div class="reflection">
         <span>Before you move on</span>
         <strong>Unclench your jaw. Let your shoulders drop.</strong>
@@ -285,7 +436,10 @@
   .practice-shell{width:min(780px,100%);min-height:calc(100svh - 76px);margin:auto;padding:clamp(28px,5vw,58px) 24px 44px;position:relative;z-index:1}.progress-header{display:flex;justify-content:space-between;align-items:center;color:var(--muted);font-size:11px}.progress-header button{min-height:44px;padding:0 4px;border:0;background:transparent;text-decoration:underline;text-underline-offset:4px;cursor:pointer}.progress-track{height:4px;margin:7px 0 clamp(24px,5vw,52px);border-radius:99px;background:#ded6c9;overflow:hidden}.progress-track i{display:block;height:100%;border-radius:inherit;background:var(--accent-dark);transition:width .35s ease}.practice-card{min-height:560px;padding:clamp(28px,6vw,58px);border:1px solid var(--line);border-radius:32px;background:#fffdf9;box-shadow:0 24px 70px #4a473f12;display:flex;flex-direction:column;align-items:flex-start}.practice-card h1{max-width:620px;font-size:clamp(39px,7vw,66px)}.practice-card>p:not(.eyebrow){max-width:510px;margin:20px 0;color:var(--muted);font-size:15px;line-height:1.6}.actions{width:100%;display:flex;gap:10px;justify-content:center}.actions.split{margin-top:auto;justify-content:space-between}.breathing-card{align-items:center;text-align:center}.breath-orbit{width:min(45vw,210px);aspect-ratio:1;margin:0 auto 28px;border-radius:50%;display:grid;place-items:center;background:var(--accent);box-shadow:0 0 0 16px color-mix(in srgb,var(--accent) 35%,transparent);animation:breathe-in 4s ease-in-out both}.breath-orbit[data-phase="1"]{animation:hold 4s linear both}.breath-orbit[data-phase="2"]{animation:breathe-out 6s ease-in-out both}.breath-orbit.paused{animation-play-state:paused}.breath-orbit div{display:flex;flex-direction:column}.breath-orbit span{font-size:11px;text-transform:uppercase;letter-spacing:.14em;color:var(--accent-dark)}.breath-orbit strong{font:56px Georgia;color:var(--accent-dark)}.breathing-card h1{font-size:38px}.breath-dots{display:flex;gap:8px;margin:8px 0 26px}.breath-dots i{width:8px;height:8px;border-radius:50%;background:#ddd8cf}.breath-dots i.complete{background:var(--accent-dark)}
   .prompt-card,.senses-card{position:relative;overflow:hidden}.prompt-number,.sense-count{position:absolute;right:26px;top:8px;font:clamp(120px,24vw,190px) Georgia;color:var(--accent);line-height:1;z-index:0}.prompt-card>*:not(.prompt-number),.senses-card>*:not(.sense-count){position:relative;z-index:1}.prompt-card label{margin-top:24px;font-size:11px;font-weight:750;text-transform:uppercase;letter-spacing:.08em}.prompt-card label span{font-weight:500;color:var(--muted);text-transform:none;letter-spacing:0}.prompt-card textarea{width:100%;margin-top:9px;padding:15px;border:1px solid var(--line);border-radius:16px;background:#f8f4ed;resize:none;line-height:1.5}.senses-card form{width:100%;display:flex;gap:8px;margin-top:22px}.senses-card input{min-width:0;flex:1;height:52px;padding:0 16px;border:1px solid var(--line);border-radius:16px;background:#f8f4ed}.senses-card form button{min-width:70px;border:0;border-radius:15px;background:var(--accent);font-weight:750;cursor:pointer}.senses-card form button:disabled{opacity:.4}.answer-list{width:100%;min-height:88px;display:flex;flex-wrap:wrap;align-content:flex-start;gap:8px;margin:16px 0}.answer-list button{min-height:40px;padding:0 10px 0 14px;border:0;border-radius:999px;background:var(--accent);cursor:pointer}.answer-list span{margin-left:8px;color:var(--accent-dark)}
   .completion{width:min(660px,100%);min-height:calc(100svh - 76px);margin:auto;padding:clamp(44px,9vw,100px) 24px;display:flex;flex-direction:column;align-items:center;text-align:center;position:relative;z-index:1}.completion-mark{width:86px;height:86px;margin-bottom:28px;border-radius:50%;display:grid;place-items:center;background:var(--accent)}.completion-mark svg{width:45px;fill:none;stroke:var(--accent-dark);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}.completion h1{font-size:clamp(48px,8vw,72px)}.completion>p:not(.eyebrow){max-width:480px;margin:22px 0;color:var(--muted);font-size:15px;line-height:1.65}.reflection{width:min(100%,480px);margin:12px 0 30px;padding:18px;border:1px solid var(--line);border-radius:18px;background:#fffdf9;text-align:left}.reflection span{display:block;margin-bottom:6px;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.1em}.reflection strong{font:18px/1.35 Georgia}.completion-actions{flex-wrap:wrap}.completion-actions .primary,.completion-actions .secondary{min-width:180px}
-  @keyframes breathe-in{from{transform:scale(.76)}to{transform:scale(1)}}@keyframes hold{from,to{transform:scale(1)}}@keyframes breathe-out{from{transform:scale(1)}to{transform:scale(.76)}}
+  .feeling-scale{width:min(100%,470px);display:block;margin:12px 0 18px;padding:14px 16px;border:1px solid var(--line);border-radius:17px;background:#fffdf9}.feeling-scale>span,.feeling-scale>small{display:flex;justify-content:space-between;gap:16px}.feeling-scale strong{font-size:11px}.feeling-scale b{font-size:12px;color:var(--accent-dark)}.feeling-scale input{width:100%;height:30px;margin:4px 0 0;accent-color:var(--accent-dark)}.feeling-scale small{font-size:9px;color:var(--muted)}
+  .measurement-stage{width:min(620px,100%);min-height:calc(100svh - 76px);margin:auto;padding:clamp(40px,8vw,90px) 24px 48px;display:flex;flex-direction:column;align-items:center;text-align:center;position:relative;z-index:1}.measurement-stage h1{max-width:580px;font-size:clamp(42px,8vw,66px)}.measurement-stage>p:not(.eyebrow){max-width:500px;margin:20px 0;color:var(--muted);font-size:14px;line-height:1.6}.watch-pulse{width:84px;height:84px;margin-bottom:26px;border-radius:28px;display:grid;place-items:center;background:#eee8dd;color:#817d75;box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 55%,transparent)}.watch-pulse.connected{background:var(--accent);color:var(--accent-dark);animation:watch-pulse 2.2s ease-out infinite}.watch-pulse svg{width:38px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}.measurement-reading{width:min(100%,430px);margin:6px 0 20px;padding:18px;border:1px solid var(--line);border-radius:20px;background:#fffdf9}.measurement-reading>span{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}.measurement-reading>strong{display:block;margin:8px 0;font:42px Georgia}.measurement-reading strong small{font:10px Manrope;color:var(--muted)}.measurement-reading>div{height:5px;border-radius:999px;background:#e3ddd3;overflow:hidden}.measurement-reading>div i{display:block;height:100%;border-radius:inherit;background:var(--accent-dark);transition:width .25s ease}.measurement-reading>small{display:block;margin-top:8px;font-size:9px;color:var(--muted)}.measurement-stage>.primary{min-width:min(100%,300px)}.text-action{min-height:44px;margin-top:8px;padding:0 12px;border:0;background:transparent;color:var(--muted);font-size:11px;text-decoration:underline;text-underline-offset:4px;cursor:pointer}.comparison-preview{width:min(100%,430px);display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:4px 0 12px}.comparison-preview>div{padding:15px;border:1px solid var(--line);border-radius:18px;background:#fffdf9}.comparison-preview span{display:block;font-size:9px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}.comparison-preview strong{display:block;margin-top:7px;font:25px Georgia}.comparison-preview small{font:9px Manrope;color:var(--muted)}.recovery-scale{margin:4px 0 18px;text-align:left}.reading-count{margin-top:9px;color:var(--muted);font-size:9px}
+  .result-card{width:min(100%,480px);display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:6px 0 0;text-align:left}.result-card>div{padding:16px;border:1px solid var(--line);border-radius:18px;background:#fffdf9}.result-card span{font-size:9px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}.result-card strong{display:block;margin:7px 0 4px;font:21px Georgia}.result-card small{font-size:9px;line-height:1.4;color:var(--muted)}.completion .result-note{margin:10px 0 4px!important;font-size:10px!important}
+  @keyframes breathe-in{from{transform:scale(.76)}to{transform:scale(1)}}@keyframes hold{from,to{transform:scale(1)}}@keyframes breathe-out{from{transform:scale(1)}to{transform:scale(.76)}}@keyframes watch-pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 60%,transparent)}70%,100%{box-shadow:0 0 0 18px transparent}}
   @media(max-width:700px){.topbar{grid-template-columns:44px 1fr 72px;padding-inline:16px}.wordmark{font-size:13px}.intro{min-height:calc(100svh - 76px);grid-template-columns:1fr;gap:26px;padding:32px 24px 48px}.hero-visual{order:-1;width:min(54vw,230px)}.intro h1{font-size:clamp(43px,13vw,60px)}.lede{font-size:14px;margin-top:18px}.intro-meta{margin:20px 0}.intro .primary{width:100%}.practice-shell{padding:22px 16px 32px}.practice-card{min-height:calc(100svh - 160px);padding:28px 22px;border-radius:25px}.practice-card h1{font-size:clamp(38px,11vw,52px)}.prompt-number,.sense-count{right:14px}.completion-actions{flex-direction:column}.completion-actions>*{width:100%}}
   @media(prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
 </style>

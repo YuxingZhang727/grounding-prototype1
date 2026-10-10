@@ -13,6 +13,7 @@ struct AnxietyCheckIn: Codable, Identifiable, Sendable {
 
 @MainActor
 final class HeartRateWorkoutManager: NSObject, ObservableObject {
+    static let shared = HeartRateWorkoutManager()
     enum SignalState: Equatable {
         case ready
         case requestingAccess
@@ -68,6 +69,11 @@ final class HeartRateWorkoutManager: NSObject, ObservableObject {
                 self?.isPhoneReachable = reachable
             }
         }
+        connectivity.onMeasurementCommand = { [weak self] command in
+            Task { @MainActor [weak self] in
+                if command == "stopMeasurement" { self?.stop() }
+            }
+        }
         connectivity.activate()
     }
 
@@ -77,6 +83,13 @@ final class HeartRateWorkoutManager: NSObject, ObservableObject {
     }
 
     func requestAccessAndStart() async {
+        let configuration = HKWorkoutConfiguration()
+        configuration.activityType = .mindAndBody
+        configuration.locationType = .indoor
+        await requestAccessAndStart(configuration: configuration)
+    }
+
+    func requestAccessAndStart(configuration: HKWorkoutConfiguration) async {
         guard !isRunning else { return }
         guard HKHealthStore.isHealthDataAvailable(),
               let heartRate = HKObjectType.quantityType(forIdentifier: .heartRate) else {
@@ -90,21 +103,17 @@ final class HeartRateWorkoutManager: NSObject, ObservableObject {
                 toShare: [HKObjectType.workoutType()],
                 read: [heartRate]
             )
-            try startWorkout()
+            try startWorkout(configuration: configuration)
         } catch {
             signalState = .unavailable("Health access is required")
         }
     }
 
-    private func startWorkout() throws {
+    private func startWorkout(configuration: HKWorkoutConfiguration) throws {
         baselineSamples.removeAll(keepingCapacity: true)
         baselineBPM = nil
         bpm = nil
         elapsedTime = 0
-
-        let configuration = HKWorkoutConfiguration()
-        configuration.activityType = .mindAndBody
-        configuration.locationType = .indoor
 
         let session = try HKWorkoutSession(healthStore: healthStore, configuration: configuration)
         let builder = session.associatedWorkoutBuilder()
@@ -298,6 +307,7 @@ extension HeartRateWorkoutManager: HKWorkoutSessionDelegate {
 
 private final class WatchSignalSender: NSObject, WCSessionDelegate {
     var onReachabilityChanged: ((Bool) -> Void)?
+    var onMeasurementCommand: ((String) -> Void)?
     private let snapshotLock = NSLock()
     private var latestSnapshot: [String: Any]?
     private var hasPhoneReceipt = false
@@ -401,6 +411,12 @@ private final class WatchSignalSender: NSObject, WCSessionDelegate {
         didReceiveMessage message: [String: Any],
         replyHandler: @escaping ([String: Any]) -> Void
     ) {
+        if message["kind"] as? String == "measurementCommand",
+           let command = message["command"] as? String {
+            onMeasurementCommand?(command)
+            replyHandler(["accepted": true])
+            return
+        }
         guard message["kind"] as? String == "requestSnapshot" else {
             replyHandler(["available": false])
             return
@@ -412,20 +428,24 @@ private final class WatchSignalSender: NSObject, WCSessionDelegate {
     }
 
     func session(_ session: WCSession, didReceiveMessage message: [String: Any]) {
-        acceptPhoneReceipt(message, session: session)
+        acceptPhoneMessage(message, session: session)
     }
 
     func session(
         _ session: WCSession,
         didReceiveApplicationContext applicationContext: [String: Any]
     ) {
-        acceptPhoneReceipt(applicationContext, session: session)
+        acceptPhoneMessage(applicationContext, session: session)
     }
 
-    private func acceptPhoneReceipt(_ message: [String: Any], session: WCSession) {
-        guard message["kind"] as? String == "snapshotReceipt" else { return }
-        hasPhoneReceipt = true
-        reportPhoneLink(session)
+    private func acceptPhoneMessage(_ message: [String: Any], session: WCSession) {
+        if message["kind"] as? String == "measurementCommand",
+           let command = message["command"] as? String {
+            onMeasurementCommand?(command)
+        } else if message["kind"] as? String == "snapshotReceipt" {
+            hasPhoneReceipt = true
+            reportPhoneLink(session)
+        }
     }
 
     private func reportPhoneLink(_ session: WCSession) {

@@ -2,7 +2,7 @@ import SwiftUI
 import WatchKit
 
 struct WatchContentView: View {
-    @StateObject private var manager = HeartRateWorkoutManager()
+    @StateObject private var manager = HeartRateWorkoutManager.shared
     @State private var isCheckInPresented = false
 
     var body: some View {
