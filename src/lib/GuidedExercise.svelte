@@ -5,6 +5,7 @@
     getWatchAvailability,
     isWatchSignalNative,
     onWatchSignal,
+    requestLatestWatchSignal,
     startWatchMeasurement,
     stopWatchMeasurement,
     type WatchSignalSnapshot
@@ -63,6 +64,7 @@
   let note = '';
   let groundingAnswers: string[][] = groundingSteps.map(() => []);
   let timer: ReturnType<typeof setInterval> | undefined;
+  let measurementPoll: ReturnType<typeof setInterval> | undefined;
   let watchListener: { remove: () => Promise<void> } | null = null;
   let watchSnapshot: WatchSignalSnapshot = { available:false };
   let measurementStage: 'idle' | 'pre' | 'recovery' | 'done' | 'unavailable' = 'idle';
@@ -84,6 +86,13 @@
       : (groundingStep + 1) / groundingSteps.length * 100;
   $: preBPM = median(preSamples) ?? watchSnapshot.baselineBPM ?? null;
   $: postBPM = median(postSamples);
+  $: watchConnectionLabel = measurementStage === 'unavailable'
+    ? 'Watch unavailable'
+    : watchSnapshot.isRunning && typeof watchSnapshot.bpm === 'number'
+      ? 'Receiving heart rate'
+      : watchSnapshot.isRunning
+        ? 'Watch connected · waiting for heart rate'
+        : 'Opening Apple Watch';
 
   function median(values: number[]) {
     if (!values.length) return null;
@@ -113,20 +122,25 @@
     postSamples = [];
     lastMeasurementTimestamp = '';
     try {
-      const availability = await getWatchAvailability();
-      if (!availability.paired || !availability.watchAppInstalled) {
+      watchListener ??= await onWatchSignal(acceptMeasurement);
+      const [availability, latest] = await Promise.all([getWatchAvailability(), getLatestWatchSignal()]);
+      if (!availability.paired) {
         measurementStage = 'unavailable';
-        measurementMessage = availability.paired ? 'Install the Grounding Watch app to add a before-and-after measurement.' : 'A paired Apple Watch was not found.';
+        measurementMessage = 'A paired Apple Watch was not found.';
         return;
       }
-      watchListener ??= await onWatchSignal(acceptMeasurement);
-      const latest = await getLatestWatchSignal();
       if (latest.isRunning) acceptMeasurement(latest);
       if (!latest.isRunning) await startWatchMeasurement();
-      measurementMessage = 'Keep your wrist relaxed while the Watch collects a short baseline.';
+      measurementMessage = 'The Watch has been asked to start. Keep your wrist relaxed while the first heart-rate reading arrives.';
+      if (measurementPoll) clearInterval(measurementPoll);
+      measurementPoll = setInterval(async () => {
+        try { acceptMeasurement(await requestLatestWatchSignal()); } catch { /* Live listener remains primary. */ }
+      }, 1_500);
     } catch (error) {
       measurementStage = 'unavailable';
-      measurementMessage = error instanceof Error ? error.message : 'The Watch measurement could not start.';
+      measurementMessage = error instanceof Error
+        ? `The Watch measurement could not start: ${error.message}`
+        : 'The Watch measurement could not start. Make sure the Grounding Watch app is installed.';
     }
   }
 
@@ -220,6 +234,8 @@
       feelingChange:postRating - preRating
     };
     if (measurementStage === 'recovery') await stopWatchMeasurement().catch(() => false);
+    if (measurementPoll) clearInterval(measurementPoll);
+    measurementPoll = undefined;
     measurementStage = 'done';
     screen = 'complete';
     navigator.vibrate?.(16);
@@ -253,6 +269,7 @@
 
   onDestroy(() => {
     if (timer) clearInterval(timer);
+    if (measurementPoll) clearInterval(measurementPoll);
     if (measurementStage === 'pre' || measurementStage === 'recovery') void stopWatchMeasurement();
     void watchListener?.remove();
   });
@@ -308,6 +325,7 @@
       </div>
       <p class="eyebrow">Before the practice</p>
       <h1 id="measurement-heading" tabindex="-1">Let’s capture your starting point.</h1>
+      <div class:connected={watchSnapshot.isRunning} class:error={measurementStage === 'unavailable'} class="connection-status" role="status" aria-live="polite"><i aria-hidden="true"></i><strong>{watchConnectionLabel}</strong></div>
       <p>{measurementMessage}</p>
       {#if measurementStage === 'pre'}
         <div class="measurement-reading" aria-live="polite">
@@ -318,6 +336,7 @@
         </div>
         <button class="primary" disabled={preSamples.length < 3 && typeof watchSnapshot.baselineBPM !== 'number'} onclick={beginPractice}>Start the practice <span aria-hidden="true">→</span></button>
       {/if}
+      {#if measurementStage === 'unavailable'}<button class="secondary retry-watch" onclick={prepareMeasurement}>Try Watch again</button>{/if}
       <button class="text-action" onclick={beginPractice}>{measurementStage === 'unavailable' ? 'Continue without Watch' : 'Skip measurement'}</button>
     </section>
 
@@ -441,6 +460,7 @@
   .completion{width:min(660px,100%);min-height:calc(100svh - 76px);margin:auto;padding:clamp(44px,9vw,100px) 24px;display:flex;flex-direction:column;align-items:center;text-align:center;position:relative;z-index:1}.completion-mark{width:86px;height:86px;margin-bottom:28px;border-radius:50%;display:grid;place-items:center;background:var(--accent)}.completion-mark svg{width:45px;fill:none;stroke:var(--accent-dark);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}.completion h1{font-size:clamp(48px,8vw,72px)}.completion>p:not(.eyebrow){max-width:480px;margin:22px 0;color:var(--muted);font-size:15px;line-height:1.65}.reflection{width:min(100%,480px);margin:12px 0 30px;padding:18px;border:1px solid var(--line);border-radius:18px;background:#fffdf9;text-align:left}.reflection span{display:block;margin-bottom:6px;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.1em}.reflection strong{font:18px/1.35 Georgia}.completion-actions{flex-wrap:wrap}.completion-actions .primary,.completion-actions .secondary{min-width:180px}
   .feeling-scale{width:min(100%,470px);display:block;margin:12px 0 18px;padding:14px 16px;border:1px solid var(--line);border-radius:17px;background:#fffdf9}.feeling-scale>span,.feeling-scale>small{display:flex;justify-content:space-between;gap:16px}.feeling-scale strong{font-size:11px}.feeling-scale b{font-size:12px;color:var(--accent-dark)}.feeling-scale input{width:100%;height:30px;margin:4px 0 0;accent-color:var(--accent-dark)}.feeling-scale small{font-size:9px;color:var(--muted)}
   .measurement-stage{width:min(620px,100%);min-height:calc(100svh - 76px);margin:auto;padding:clamp(40px,8vw,90px) 24px 48px;display:flex;flex-direction:column;align-items:center;text-align:center;position:relative;z-index:1}.measurement-stage h1{max-width:580px;font-size:clamp(42px,8vw,66px)}.measurement-stage>p:not(.eyebrow){max-width:500px;margin:20px 0;color:var(--muted);font-size:14px;line-height:1.6}.watch-pulse{width:84px;height:84px;margin-bottom:26px;border-radius:28px;display:grid;place-items:center;background:#eee8dd;color:#817d75;box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 55%,transparent)}.watch-pulse.connected{background:var(--accent);color:var(--accent-dark);animation:watch-pulse 2.2s ease-out infinite}.watch-pulse svg{width:38px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}.measurement-reading{width:min(100%,430px);margin:6px 0 20px;padding:18px;border:1px solid var(--line);border-radius:20px;background:#fffdf9}.measurement-reading>span{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}.measurement-reading>strong{display:block;margin:8px 0;font:42px Georgia}.measurement-reading strong small{font:10px Manrope;color:var(--muted)}.measurement-reading>div{height:5px;border-radius:999px;background:#e3ddd3;overflow:hidden}.measurement-reading>div i{display:block;height:100%;border-radius:inherit;background:var(--accent-dark);transition:width .25s ease}.measurement-reading>small{display:block;margin-top:8px;font-size:9px;color:var(--muted)}.measurement-stage>.primary{min-width:min(100%,300px)}.text-action{min-height:44px;margin-top:8px;padding:0 12px;border:0;background:transparent;color:var(--muted);font-size:11px;text-decoration:underline;text-underline-offset:4px;cursor:pointer}.comparison-preview{width:min(100%,430px);display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:4px 0 12px}.comparison-preview>div{padding:15px;border:1px solid var(--line);border-radius:18px;background:#fffdf9}.comparison-preview span{display:block;font-size:9px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}.comparison-preview strong{display:block;margin-top:7px;font:25px Georgia}.comparison-preview small{font:9px Manrope;color:var(--muted)}.recovery-scale{margin:4px 0 18px;text-align:left}.reading-count{margin-top:9px;color:var(--muted);font-size:9px}
+  .connection-status{min-height:36px;margin-top:18px;padding:0 12px;border-radius:999px;display:flex;align-items:center;gap:8px;background:#eee8dd;color:#625f59;font-size:11px}.connection-status i{width:8px;height:8px;border-radius:50%;background:#9a958c}.connection-status.connected{background:#dcece5;color:#315f55}.connection-status.connected i{background:#3f9187;box-shadow:0 0 0 4px #3f918726}.connection-status.error{background:#f5dfd8;color:#7e4035}.connection-status.error i{background:#b95e4d}.retry-watch{min-width:min(100%,300px)}
   .result-card{width:min(100%,480px);display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:6px 0 0;text-align:left}.result-card>div{padding:16px;border:1px solid var(--line);border-radius:18px;background:#fffdf9}.result-card span{font-size:9px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}.result-card strong{display:block;margin:7px 0 4px;font:21px Georgia}.result-card small{font-size:9px;line-height:1.4;color:var(--muted)}.completion .result-note{margin:10px 0 4px!important;font-size:10px!important}
   @keyframes breathe-in{from{transform:scale(.76)}to{transform:scale(1)}}@keyframes hold{from,to{transform:scale(1)}}@keyframes breathe-out{from{transform:scale(1)}to{transform:scale(.76)}}@keyframes watch-pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 60%,transparent)}70%,100%{box-shadow:0 0 0 18px transparent}}
   @media(max-width:700px){.topbar{grid-template-columns:44px 1fr 72px;padding-inline:16px}.wordmark{font-size:13px}.intro{min-height:calc(100svh - 76px);grid-template-columns:1fr;gap:26px;padding:32px 24px 48px}.hero-visual{order:-1;width:min(54vw,230px)}.intro h1{font-size:clamp(43px,13vw,60px)}.lede{font-size:14px;margin-top:18px}.intro-meta{margin:20px 0}.intro .primary{width:100%}.practice-shell{padding:22px 16px 32px}.practice-card{min-height:calc(100svh - 160px);padding:28px 22px;border-radius:25px}.practice-card h1{font-size:clamp(38px,11vw,52px)}.prompt-number,.sense-count{right:14px}.completion-actions{flex-direction:column}.completion-actions>*{width:100%}}
