@@ -63,7 +63,8 @@
   let selectedHealthKey: TrendMetric['key'] | null = null;
   let selectedHealthMetric: TrendMetric | undefined;
   let selectedHealthDetails: (typeof healthMetricDetails)[number] | undefined;
-  type ChartPoint = { day:string; value:number; x:number; y:number };
+  type HealthReading = { day:string; value:number };
+  type ChartPoint = HealthReading & { x:number; y:number };
   let selectedHealthChart: { points:string; chartPoints:ChartPoint[]; baselineY:number | null; minimum:number; maximum:number; lastX:number; lastY:number };
   type HealthRange = 'day' | 'week' | 'month' | 'all';
   const healthRanges: { id:HealthRange; label:string; days:number }[] = [
@@ -73,7 +74,8 @@
   let healthRange: HealthRange = 'month';
   let detailHealthTrends: TrendsPayload | null = null;
   let detailHealthLoading = false;
-  let selectedHealthPoint: ChartPoint | null = null;
+  let selectedHealthPoint: HealthReading | null = null;
+  let isScrubbingHealthChart = false;
   let healthPanelOpen = false;
   let healthMessage = 'Checking whether Apple Health is available…';
   let watchAvailability: WatchAvailability = { available:false, activated:false, paired:false, watchAppInstalled:false, reachable:false };
@@ -463,6 +465,35 @@
       lastX: x(series.length - 1),
       lastY: y(series[series.length - 1].value)
     };
+  }
+  function healthChartAnchors() {
+    const points = selectedHealthChart.chartPoints;
+    if (points.length <= 7) return points;
+    return Array.from({ length:6 }, (_, index) => points[Math.round(index * (points.length - 1) / 5)]);
+  }
+  function selectNearestHealthPoint(event: PointerEvent) {
+    const points = selectedHealthChart.chartPoints;
+    if (!points.length) return;
+    const svg = event.currentTarget as SVGSVGElement;
+    const bounds = svg.getBoundingClientRect();
+    const chartX = Math.max(14, Math.min(286, (event.clientX - bounds.left) / bounds.width * 300));
+    selectedHealthPoint = points.reduce((nearest, point) =>
+      Math.abs(point.x - chartX) < Math.abs(nearest.x - chartX) ? point : nearest
+    );
+  }
+  function startHealthChartScrub(event: PointerEvent) {
+    event.preventDefault();
+    isScrubbingHealthChart = true;
+    (event.currentTarget as SVGSVGElement).setPointerCapture(event.pointerId);
+    selectNearestHealthPoint(event);
+  }
+  function moveHealthChartScrub(event: PointerEvent) {
+    if (!isScrubbingHealthChart) return;
+    event.preventDefault();
+    selectNearestHealthPoint(event);
+  }
+  function endHealthChartScrub() {
+    isScrubbingHealthChart = false;
   }
   function healthMetricExplanation(key: TrendMetric['key']) {
     if (key === 'hrv') return 'HRV is the variation in time between heartbeats. Your own pattern matters more than a single value.';
@@ -925,18 +956,31 @@
           </div>
           <div class="health-line-chart">
             <div class="chart-scale"><span>{selectedHealthChart.maximum.toFixed(0)}</span><span>{selectedHealthChart.minimum.toFixed(0)}</span></div>
-            <svg viewBox="0 0 300 128" role="img" aria-label={`${selectedHealthDetails.label} history. ${healthChartSummary(selectedHealthMetric)}`}>
+            <svg
+              viewBox="0 0 300 128"
+              role="img"
+              aria-label={`${selectedHealthDetails.label} history. Slide across the chart to inspect the nearest reading. ${healthChartSummary(selectedHealthMetric)}`}
+              onpointerdown={startHealthChartScrub}
+              onpointermove={moveHealthChartScrub}
+              onpointerup={endHealthChartScrub}
+              onpointercancel={endHealthChartScrub}
+              onlostpointercapture={endHealthChartScrub}
+            >
               <path class="chart-grid" d="M14 12H286M14 64H286M14 116H286"/>
               {#if selectedHealthChart.baselineY !== null}<path class="chart-baseline" d={`M14 ${selectedHealthChart.baselineY}H286`}/>{/if}
               <polyline points={selectedHealthChart.points}/>
-              {#each selectedHealthChart.chartPoints as point}
-                <circle class:selected={selectedHealthPoint?.day === point.day} cx={point.x} cy={point.y} r={selectedHealthPoint?.day === point.day ? 6 : 4} role="button" tabindex="0" aria-label={`${chartDay(point.day)}: ${point.value} ${selectedHealthDetails.unit}`} onclick={() => selectedHealthPoint = point} onkeydown={(event) => { if (event.key === 'Enter' || event.key === ' ') selectedHealthPoint = point; }}/>
+              {#each healthChartAnchors() as point}
+                <circle class="chart-anchor" cx={point.x} cy={point.y} r="3"/>
+              {/each}
+              {#each selectedHealthChart.chartPoints.filter(point => point.day === selectedHealthPoint?.day) as point}
+                <path class="chart-selection-line" d={`M${point.x} 12V116`}/>
+                <circle class="selected" cx={point.x} cy={point.y} r="6"/>
               {/each}
             </svg>
             <div class="chart-dates"><span>{chartDay(selectedHealthMetric.series[0].day)}</span><span>{chartDay(selectedHealthMetric.series[selectedHealthMetric.series.length - 1].day)}</span></div>
           </div>
           {#if selectedHealthPoint}<p class="health-point-value"><strong>{chartDay(selectedHealthPoint.day)}</strong><span>{new Intl.NumberFormat(appLocale, { maximumFractionDigits:1 }).format(selectedHealthPoint.value)} {selectedHealthDetails.unit}</span></p>{/if}
-          <p class="health-chart-summary">{healthChartSummary(selectedHealthMetric)} Tap a point for its value.</p>
+          <p class="health-chart-summary">{healthChartSummary(selectedHealthMetric)} Slide across the chart to inspect each reading.</p>
         {:else}
           <div class="health-detail-empty">
             <strong>No recorded history yet</strong>
@@ -947,7 +991,7 @@
           <div class="health-reading-list" aria-label="Recent recorded values">
             <strong>Recent readings</strong>
             {#each selectedHealthMetric.series.slice(-7).reverse() as point}
-              <div><span>{chartDay(point.day)}</span><span>{new Intl.NumberFormat(appLocale, { maximumFractionDigits:1 }).format(point.value)} {selectedHealthDetails.unit}</span></div>
+              <button type="button" class:selected={selectedHealthPoint?.day === point.day} onclick={() => selectedHealthPoint = point}><span>{chartDay(point.day)}</span><span>{new Intl.NumberFormat(appLocale, { maximumFractionDigits:1 }).format(point.value)} {selectedHealthDetails.unit}</span></button>
             {/each}
           </div>
         {/if}
@@ -975,7 +1019,7 @@
   .artifact-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.artifact{min-width:0;border:1px solid var(--border);border-radius:20px;overflow:hidden;background:var(--surface);position:relative}.artifact>img{display:block;width:100%;height:130px;object-fit:cover}.artifact>img.sticker-image{object-fit:contain;padding:12px;background:#f5eee3}.artifact>div{padding:13px;display:flex;flex-direction:column;gap:4px}.tape-grid{grid-template-columns:1fr}.tape-artifact>img{height:96px;padding:18px 16px;object-fit:contain;background:#f5eee3}
   .artifact-delete{position:absolute;z-index:2;right:8px;top:8px;width:44px;height:44px;padding:0;border:0;border-radius:50%;display:grid;place-items:center;background:#fffdf9ed;color:#934235;box-shadow:0 2px 8px #2f302d20;cursor:pointer}.artifact-delete svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}.artifact-delete:active{opacity:.68}.empty{padding:30px;text-align:center}.empty .paper-motif{width:130px;margin:auto}.empty h2{font-size:19px}.empty p{font-size:13px;line-height:1.5;color:var(--muted)}.profile-card{padding:19px}.profile-card h2{font-size:19px;margin-bottom:4px}.setting-icon{width:24px;text-align:center;color:#6b7e77}.status-dot{display:block;width:10px!important;height:10px;border-radius:50%;background:#4f9e95}.settings-row{width:100%;min-height:68px;padding:12px 15px;border:0;background:transparent;display:flex;align-items:center;gap:12px;text-align:left;cursor:pointer}.settings-row>div{display:flex;flex:1;flex-direction:column;gap:3px}.settings-row small{font-size:11px;color:var(--muted)}.row-end{display:flex;align-items:center;gap:10px;color:var(--muted)}.health-permission-card{scroll-margin-block:calc(22px + env(safe-area-inset-top)) 120px;margin-top:12px;padding:20px;border-radius:22px;background:var(--teal);border:1px solid #c8ddd5}.permission-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.permission-heading h2{font-size:20px}.text-button{min-height:44px;padding:0 10px;border:0;background:transparent;color:#466b64;font-size:12px;font-weight:700;cursor:pointer}.health-permission-card>p{margin:14px 0 0;font-size:13px;line-height:1.55;color:#52645f}.health-permission-card ul{display:grid;grid-template-columns:1fr 1fr;gap:8px 14px;margin:17px 0;padding:0;list-style:none}.health-permission-card li{position:relative;padding-left:16px;font-size:12px;line-height:1.45}.health-permission-card li::before{content:'';position:absolute;left:0;top:.42em;width:7px;height:7px;border-radius:50%;background:#efb23e}.privacy-note{display:flex;gap:11px;padding:14px;border-radius:16px;background:#fffdf9b8}.privacy-note :global(svg){flex:none;color:#8a5548}.privacy-note p{display:flex;flex-direction:column;gap:4px;margin:0}.privacy-note strong{font-size:12px}.privacy-note span{font-size:11px;line-height:1.45;color:var(--muted)}.health-permission-card .permission-status{min-height:37px;margin-top:13px;font-size:11px}.permission-action{width:100%;margin-top:10px}
   .collection-actions{display:flex;align-items:center;gap:8px}.collection-actions>span{min-width:30px;height:30px;border-radius:15px;background:var(--cream);display:grid;place-items:center;font-size:11px;font-weight:700}.sticker-upload{position:relative;min-height:44px;padding:0 14px;border:1px solid var(--border);border-radius:14px;background:var(--surface);display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;cursor:pointer;touch-action:manipulation}.sticker-upload:active{opacity:.66}.sticker-upload.disabled{cursor:default;opacity:.55}.sticker-upload input{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}.sticker-import-message{margin:10px 0 12px;padding:10px 12px;border-radius:13px;background:#e3efea;color:#355f59;font-size:11px;line-height:1.45}.sticker-import-message.error{background:#f7e2dc;color:#873e34}
-  .health-detail-layer{position:fixed;z-index:90;inset:0;display:flex;align-items:flex-end;justify-content:center}.health-detail-scrim{position:absolute;inset:0;width:100%;height:100%;padding:0;border:0;background:rgba(42,38,34,.46);cursor:pointer}.health-detail-sheet{position:relative;width:min(100%,620px);max-height:min(88dvh,760px);padding:10px 22px calc(26px + env(safe-area-inset-bottom));border-radius:28px 28px 0 0;background:var(--surface);overflow-y:auto;box-shadow:0 -12px 40px rgba(45,40,35,.16)}.health-detail-handle{width:38px;height:4px;margin:0 auto 13px;border-radius:999px;background:#c9c1b6}.health-detail-sheet header{display:flex;align-items:flex-start;justify-content:space-between;gap:18px}.health-detail-sheet header h2{font-size:23px;line-height:1.2}.health-detail-close{width:44px;height:44px;flex:none;padding:0;border:1px solid var(--border);border-radius:50%;background:var(--surface);font-size:26px;line-height:1;cursor:pointer}.health-detail-summary{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:18px}.health-detail-summary>div{padding:14px;border-radius:17px;background:var(--cream)}.health-detail-summary span{display:block;font-size:10px;color:var(--muted)}.health-detail-summary strong{display:inline-block;margin-top:8px;font-size:25px;font-variant-numeric:tabular-nums}.health-detail-summary small{margin-left:5px;font-size:9px;color:var(--muted)}.health-line-chart{position:relative;margin-top:18px;padding:9px 8px 0 30px;border:1px solid var(--border);border-radius:18px;background:#faf7f1}.health-line-chart svg{display:block;width:100%;height:150px;overflow:visible}.health-line-chart polyline{fill:none;stroke:#4f827b;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}.health-line-chart circle{fill:var(--sun);stroke:#fffdf9;stroke-width:3}.health-line-chart .chart-grid{fill:none;stroke:#ded6c9;stroke-width:1}.health-line-chart .chart-baseline{fill:none;stroke:#b26e54;stroke-width:1.5;stroke-dasharray:5 5}.chart-scale{position:absolute;left:7px;top:19px;bottom:30px;display:flex;flex-direction:column;justify-content:space-between;font-size:8px;color:var(--muted)}.chart-dates{display:flex;justify-content:space-between;padding:0 4px 10px;font-size:9px;color:var(--muted)}.health-chart-summary{margin:9px 2px 0;font-size:11px;line-height:1.5;color:var(--muted)}.health-source-note{margin-top:17px;padding:14px;border-radius:17px;background:var(--teal)}.health-source-note strong,.health-reading-list>strong{font-size:12px}.health-source-note p{margin:5px 0 0;font-size:11px;line-height:1.5;color:#52645f}.health-reading-list{margin-top:17px}.health-reading-list>div{min-height:38px;display:flex;align-items:center;justify-content:space-between;gap:12px;border-bottom:1px solid var(--border);font-size:11px}.health-reading-list>div span:last-child{font-weight:700;font-variant-numeric:tabular-nums}
+  .health-detail-layer{position:fixed;z-index:90;inset:0;display:flex;align-items:flex-end;justify-content:center}.health-detail-scrim{position:absolute;inset:0;width:100%;height:100%;padding:0;border:0;background:rgba(42,38,34,.46);cursor:pointer}.health-detail-sheet{position:relative;width:min(100%,620px);max-height:min(88dvh,760px);padding:10px 22px calc(26px + env(safe-area-inset-bottom));border-radius:28px 28px 0 0;background:var(--surface);overflow-y:auto;box-shadow:0 -12px 40px rgba(45,40,35,.16)}.health-detail-handle{width:38px;height:4px;margin:0 auto 13px;border-radius:999px;background:#c9c1b6}.health-detail-sheet header{display:flex;align-items:flex-start;justify-content:space-between;gap:18px}.health-detail-sheet header h2{font-size:23px;line-height:1.2}.health-detail-close{width:44px;height:44px;flex:none;padding:0;border:1px solid var(--border);border-radius:50%;background:var(--surface);font-size:26px;line-height:1;cursor:pointer}.health-detail-summary{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:18px}.health-detail-summary>div{padding:14px;border-radius:17px;background:var(--cream)}.health-detail-summary span{display:block;font-size:10px;color:var(--muted)}.health-detail-summary strong{display:inline-block;margin-top:8px;font-size:25px;font-variant-numeric:tabular-nums}.health-detail-summary small{margin-left:5px;font-size:9px;color:var(--muted)}.health-line-chart{position:relative;margin-top:18px;padding:9px 8px 0 30px;border:1px solid var(--border);border-radius:18px;background:#faf7f1}.health-line-chart svg{display:block;width:100%;height:150px;overflow:visible;cursor:ew-resize;touch-action:none}.health-line-chart polyline{fill:none;stroke:#4f827b;stroke-width:3;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}.health-line-chart circle{fill:var(--sun);stroke:#fffdf9;stroke-width:3;pointer-events:none}.health-line-chart .chart-grid{fill:none;stroke:#ded6c9;stroke-width:1;pointer-events:none}.health-line-chart .chart-baseline{fill:none;stroke:#b26e54;stroke-width:1.5;stroke-dasharray:5 5;pointer-events:none}.health-line-chart .chart-selection-line{fill:none;stroke:#6b6259;stroke-width:1.25;stroke-dasharray:4 4;pointer-events:none}.health-line-chart .chart-anchor{opacity:.72}.chart-scale{position:absolute;left:7px;top:19px;bottom:30px;display:flex;flex-direction:column;justify-content:space-between;font-size:8px;color:var(--muted)}.chart-dates{display:flex;justify-content:space-between;padding:0 4px 10px;font-size:9px;color:var(--muted)}.health-chart-summary{margin:9px 2px 0;font-size:11px;line-height:1.5;color:var(--muted)}.health-source-note{margin-top:17px;padding:14px;border-radius:17px;background:var(--teal)}.health-source-note strong,.health-reading-list>strong{font-size:12px}.health-source-note p{margin:5px 0 0;font-size:11px;line-height:1.5;color:#52645f}.health-reading-list{margin-top:17px}.health-reading-list>button{width:100%;min-height:44px;padding:0;border:0;border-bottom:1px solid var(--border);background:transparent;display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:11px;cursor:pointer}.health-reading-list>button.selected{padding-inline:9px;border-radius:10px;background:var(--sun-soft)}.health-reading-list>button span:last-child{font-weight:700;font-variant-numeric:tabular-nums}
   .feeling-detail-sheet{max-height:min(90dvh,820px)}.feeling-conclusion{margin-top:18px;padding:17px;border-left:4px solid #7aa59d;border-radius:17px;background:var(--teal)}.feeling-conclusion.mild{border-left-color:var(--sun);background:var(--sun-soft)}.feeling-conclusion.elevated{border-left-color:#c46f57;background:#f7e2dc}.feeling-conclusion>span{font-size:9px;font-weight:750;text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}.feeling-conclusion p{margin:7px 0 8px;font-size:13px;line-height:1.55}.feeling-conclusion small{font-size:10px;color:var(--muted)}.feeling-method,.feeling-evidence{margin-top:22px}.feeling-method h3,.feeling-section-heading h3{margin:0;font-size:14px}.feeling-method ol{margin:12px 0 0;padding:0;list-style:none;display:grid;gap:12px}.feeling-method li{display:grid;grid-template-columns:30px 1fr;gap:11px;align-items:start}.feeling-method li>span{width:30px;height:30px;border-radius:11px;display:grid;place-items:center;background:var(--cream);font-size:11px;font-weight:750}.feeling-method strong{font-size:12px}.feeling-method p{margin:4px 0 0;font-size:11px;line-height:1.5;color:var(--muted)}.feeling-section-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}.feeling-section-heading>span{padding:6px 9px;border-radius:999px;background:var(--cream);font-size:9px;font-weight:700;color:var(--muted)}.feeling-evidence article{padding:13px 0;border-bottom:1px solid var(--border)}.feeling-evidence article.primary-evidence{margin-bottom:3px;padding:14px;border:1px solid #c8ddd5;border-radius:16px;background:var(--teal)}.feeling-evidence article>div{display:flex;align-items:center;justify-content:space-between;gap:12px}.feeling-evidence article strong{font-size:12px}.feeling-evidence article>div span{flex:none;font-size:9px;font-weight:700;color:#52645f}.feeling-evidence article>p{margin:7px 0 3px;font-size:13px;font-weight:700;font-variant-numeric:tabular-nums}.feeling-evidence article>small{display:block;font-size:10px;line-height:1.45;color:var(--muted)}.feeling-not-used{margin-top:20px;padding:15px;border-radius:16px;background:var(--cream)}.feeling-not-used strong{font-size:12px}.feeling-not-used p{margin:6px 0 0;font-size:10px;line-height:1.5;color:var(--muted)}.feeling-updated{margin:13px 2px 0;font-size:9px;color:var(--muted);text-align:center}
   .bottom-nav{position:fixed;z-index:20;left:max(24px,env(safe-area-inset-left));right:max(24px,env(safe-area-inset-right));bottom:max(16px,env(safe-area-inset-bottom));max-width:640px;margin:auto;height:72px;padding:10px 12px;display:flex;align-items:center;justify-content:space-between;border-radius:24px;background:rgba(241,231,214,.96);box-shadow:0 8px 24px rgba(45,40,35,.1);backdrop-filter:blur(16px)}.bottom-nav button{width:58px;height:52px;border:0;border-radius:18px;background:none;color:#72766f;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;cursor:pointer}.bottom-nav button.active{background:var(--sun-soft);color:#2f302d}.bottom-nav span{font-size:9px}.desktop-rail{display:none}
   @media(max-width:374px){.page{padding-inline:18px}.focus-card{grid-template-columns:1fr 80px}.state-card{gap:10px}.watch-source{width:68px}.method-grid{gap:12px}.method-grid button{min-height:145px}.summary-card span{font-size:9px}.bottom-nav{left:12px;right:12px}.bottom-nav button{width:52px}.artifact-grid,.journal-grid,.health-grid{grid-template-columns:1fr}.health-card-header{align-items:flex-start}.health-status{max-width:92px;text-align:center}.health-permission-card ul{grid-template-columns:1fr}.health-detail-sheet{padding-inline:18px}.health-detail-summary{grid-template-columns:1fr}}
@@ -986,5 +1030,5 @@
   .health-detail-empty p{margin:7px 0 0;font-size:11px;line-height:1.5;color:var(--muted)}
   .practice-trend{margin-top:14px}.bars i{flex:1;max-width:38px;min-height:8px}.bars i b{position:absolute;top:-17px;width:100%;text-align:center;font:9px/1 Manrope}.method-dot{flex:none}.method-dot.mindfulness{background:#ddd6ee}.method-dot.grounding{background:#cfdfc0}
   .ecg-summary{margin-top:12px;padding:13px;border-radius:15px;background:var(--cream);display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.ecg-summary.unavailable{background:#f5f2ec}.ecg-summary>div{display:flex;flex-direction:column;gap:3px}.ecg-summary strong{font-size:12px}.ecg-summary span,.ecg-summary small{font-size:9px;line-height:1.45;color:var(--muted)}.ecg-summary small{max-width:180px;text-align:right}
-  .health-intro{margin:15px 0 0;font-size:12px;line-height:1.5;color:var(--muted)}.health-range{display:flex;gap:7px;margin-top:14px}.health-range button{min-height:44px;flex:1;border:1px solid var(--border);border-radius:14px;background:var(--surface);font-size:11px;font-weight:700;cursor:pointer}.health-range button.active{background:var(--teal);border-color:#7aa59d}.health-point-value{margin:10px 0 0;padding:10px 12px;border-radius:13px;background:var(--sun-soft);display:flex;justify-content:space-between;font-size:11px}.health-line-chart circle{cursor:pointer}.health-line-chart circle.selected{fill:#b26e54;stroke-width:4}.health-line-chart circle:focus{outline:none;stroke:#2f302d;stroke-width:4}.feeling-method>p{margin:9px 0 0;font-size:11px;line-height:1.55;color:var(--muted)}
+  .health-intro{margin:15px 0 0;font-size:12px;line-height:1.5;color:var(--muted)}.health-range{display:flex;gap:7px;margin-top:14px}.health-range button{min-height:44px;flex:1;border:1px solid var(--border);border-radius:14px;background:var(--surface);font-size:11px;font-weight:700;cursor:pointer}.health-range button.active{background:var(--teal);border-color:#7aa59d}.health-point-value{margin:10px 0 0;padding:10px 12px;border-radius:13px;background:var(--sun-soft);display:flex;justify-content:space-between;font-size:11px}.health-line-chart circle.selected{fill:#b26e54;stroke-width:4}.feeling-method>p{margin:9px 0 0;font-size:11px;line-height:1.55;color:var(--muted)}
 </style>
