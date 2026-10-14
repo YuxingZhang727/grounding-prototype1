@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import {
     getLatestWatchSignal,
     getWatchAvailability,
@@ -54,6 +54,8 @@
   ];
 
   type Screen = 'intro' | 'preparing' | 'practice' | 'recovery' | 'complete';
+  type MeasurementSample = { bpm:number; at:number; motion:number };
+  type PreflightState = 'checking' | 'ready' | 'needs-watch' | 'unsupported';
   let screen: Screen = 'intro';
   let isRunning = false;
   let breathPhase = 0;
@@ -65,16 +67,20 @@
   let groundingAnswers: string[][] = groundingSteps.map(() => []);
   let timer: ReturnType<typeof setInterval> | undefined;
   let measurementPoll: ReturnType<typeof setInterval> | undefined;
+  let recoveryClock: ReturnType<typeof setInterval> | undefined;
   let watchListener: { remove: () => Promise<void> } | null = null;
   let watchSnapshot: WatchSignalSnapshot = { available:false };
   let measurementStage: 'idle' | 'pre' | 'recovery' | 'done' | 'unavailable' = 'idle';
   let measurementMessage = '';
-  let preSamples: number[] = [];
-  let postSamples: number[] = [];
+  let preflightState: PreflightState = 'checking';
+  let preflightMessage = 'Checking for a paired Apple Watch…';
+  let preSamples: MeasurementSample[] = [];
+  let postSamples: MeasurementSample[] = [];
   let lastMeasurementTimestamp = '';
+  let recoveryElapsed = 0;
   let preRating = 5;
   let postRating = 5;
-  let measurementResult: { preBPM:number | null; postBPM:number | null; bpmChange:number | null; feelingChange:number } | null = null;
+  let measurementResult: { preBPM:number | null; postBPM:number | null; bpmChange:number | null; recoverySlope:number | null; feelingChange:number; confidence:'low' | 'medium' | 'high'; motionAffected:boolean; preSampleCount:number; postSampleCount:number } | null = null;
 
   $: config = configs[mode];
   $: breathInstruction = ['Breathe in', 'Hold gently', 'Breathe out'][breathPhase];
@@ -94,10 +100,45 @@
         ? 'Watch connected · waiting for heart rate'
         : 'Opening Apple Watch';
 
-  function median(values: number[]) {
+  function median(values: MeasurementSample[]) {
     if (!values.length) return null;
-    const ordered = [...values].sort((a, b) => a - b);
+    const ordered = values.map(sample => sample.bpm).sort((a, b) => a - b);
     return ordered[Math.floor(ordered.length / 2)];
+  }
+
+  function slope(values: MeasurementSample[]) {
+    if (values.length < 3) return null;
+    const origin = values[0].at;
+    const points = values.map(sample => ({ x:(sample.at - origin) / 1000, y:sample.bpm }));
+    const meanX = points.reduce((sum, point) => sum + point.x, 0) / points.length;
+    const meanY = points.reduce((sum, point) => sum + point.y, 0) / points.length;
+    const denominator = points.reduce((sum, point) => sum + (point.x - meanX) ** 2, 0);
+    if (!denominator) return null;
+    return points.reduce((sum, point) => sum + (point.x - meanX) * (point.y - meanY), 0) / denominator;
+  }
+
+  async function checkWatchReadiness() {
+    if (!isWatchSignalNative()) {
+      preflightState = 'unsupported';
+      preflightMessage = 'Watch measurement is available in the installed iPhone app.';
+      return;
+    }
+    preflightState = 'checking';
+    try {
+      const [availability, latest] = await Promise.all([getWatchAvailability(), getLatestWatchSignal()]);
+      if (!availability.paired) {
+        preflightState = 'needs-watch';
+        preflightMessage = 'No paired Apple Watch was found. You can still continue without measurement.';
+        return;
+      }
+      preflightState = 'ready';
+      preflightMessage = latest.kind === 'snapshot'
+        ? 'Apple Watch is paired and the Grounding companion has responded before. Live connection will be verified before the exercise starts.'
+        : 'Apple Watch is paired. The Grounding companion will be opened and verified before the exercise starts.';
+    } catch {
+      preflightState = 'needs-watch';
+      preflightMessage = 'Watch readiness could not be confirmed. You can retry or continue without measurement.';
+    }
   }
 
   function acceptMeasurement(snapshot: WatchSignalSnapshot) {
@@ -105,8 +146,9 @@
     const bpm = Number(snapshot.bpm ?? snapshot.heartRateBPM ?? snapshot.bpmText);
     if (!snapshot.isRunning || !Number.isFinite(bpm) || snapshot.timestamp === lastMeasurementTimestamp) return;
     lastMeasurementTimestamp = snapshot.timestamp ?? `${Date.now()}`;
-    if (measurementStage === 'pre') preSamples = [...preSamples.slice(-9), bpm];
-    if (measurementStage === 'recovery') postSamples = [...postSamples.slice(-9), bpm];
+    const sample = { bpm, at:Date.parse(snapshot.timestamp ?? '') || Date.now(), motion:Number(snapshot.motionIntensity ?? 0) };
+    if (measurementStage === 'pre') preSamples = [...preSamples.slice(-11), sample];
+    if (measurementStage === 'recovery') postSamples = [...postSamples.slice(-19), sample];
   }
 
   async function prepareMeasurement() {
@@ -219,6 +261,9 @@
       measurementStage = 'recovery';
       postSamples = [];
       lastMeasurementTimestamp = '';
+      recoveryElapsed = 0;
+      if (recoveryClock) clearInterval(recoveryClock);
+      recoveryClock = setInterval(() => recoveryElapsed += 1, 1_000);
     }
     screen = 'recovery';
     requestAnimationFrame(() => document.querySelector<HTMLElement>('.recovery h1')?.focus());
@@ -227,12 +272,27 @@
   async function completeSession() {
     const before = preBPM;
     const after = postBPM;
+    const allSamples = [...preSamples, ...postSamples];
+    const movingSamples = allSamples.filter(sample => sample.motion >= .16).length;
+    const motionRatio = allSamples.length ? movingSamples / allSamples.length : 1;
+    const confidence = preSamples.length >= 5 && postSamples.length >= 5 && recoveryElapsed >= 20 && motionRatio < .2
+      ? 'high'
+      : preSamples.length >= 3 && postSamples.length >= 3 && motionRatio < .4
+        ? 'medium'
+        : 'low';
     measurementResult = {
       preBPM:before,
       postBPM:after,
       bpmChange:before !== null && after !== null ? after - before : null,
-      feelingChange:postRating - preRating
+      recoverySlope:slope(postSamples),
+      feelingChange:postRating - preRating,
+      confidence,
+      motionAffected:motionRatio >= .2,
+      preSampleCount:preSamples.length,
+      postSampleCount:postSamples.length
     };
+    if (recoveryClock) clearInterval(recoveryClock);
+    recoveryClock = undefined;
     if (measurementStage === 'recovery') await stopWatchMeasurement().catch(() => false);
     if (measurementPoll) clearInterval(measurementPoll);
     measurementPoll = undefined;
@@ -262,6 +322,7 @@
     watchSnapshot = { available:false };
     preSamples = [];
     postSamples = [];
+    recoveryElapsed = 0;
     preRating = 5;
     postRating = 5;
     measurementResult = null;
@@ -270,9 +331,12 @@
   onDestroy(() => {
     if (timer) clearInterval(timer);
     if (measurementPoll) clearInterval(measurementPoll);
+    if (recoveryClock) clearInterval(recoveryClock);
     if (measurementStage === 'pre' || measurementStage === 'recovery') void stopWatchMeasurement();
     void watchListener?.remove();
   });
+
+  onMount(() => { void checkWatchReadiness(); });
 </script>
 
 <svelte:head>
@@ -299,12 +363,17 @@
           <span><b aria-hidden="true">○</b> No score</span>
           <span><b aria-hidden="true">◷</b> Stop anytime</span>
         </div>
+        <section class:ready={preflightState === 'ready'} class:attention={preflightState === 'needs-watch'} class="preflight-card" aria-labelledby="preflight-heading">
+          <div><i aria-hidden="true"></i><strong id="preflight-heading">Apple Watch readiness</strong><span>{preflightState === 'checking' ? 'Checking' : preflightState === 'ready' ? 'Paired' : preflightState === 'unsupported' ? 'iPhone app only' : 'Needs attention'}</span></div>
+          <p>{preflightMessage}</p>
+          {#if preflightState === 'needs-watch'}<button onclick={checkWatchReadiness}>Check again</button>{/if}
+        </section>
         <label class="feeling-scale" for="before-feeling">
           <span><strong>How activated do you feel?</strong><b>{preRating}/10</b></span>
           <input id="before-feeling" type="range" min="0" max="10" step="1" bind:value={preRating} />
           <small><span>Settled</span><span>Very activated</span></small>
         </label>
-        <button class="primary" onclick={prepareMeasurement}>Begin with Watch measurement <span aria-hidden="true">→</span></button>
+        <button class="primary" onclick={prepareMeasurement}>{preflightState === 'ready' ? 'Test Watch & capture baseline' : 'Continue to setup'} <span aria-hidden="true">→</span></button>
       </div>
 
       <div class:breath-visual={mode === 'breathing'} class:mindful-visual={mode === 'mindfulness'} class:senses-visual={mode === 'grounding'} class="hero-visual" aria-hidden="true">
@@ -421,8 +490,8 @@
         <input id="after-feeling" type="range" min="0" max="10" step="1" bind:value={postRating} />
         <small><span>Settled</span><span>Very activated</span></small>
       </label>
-      <button class="primary" onclick={completeSession}>{postSamples.length >= 3 ? 'See comparison' : 'Finish when ready'} <span aria-hidden="true">→</span></button>
-      <small class="reading-count" aria-live="polite">{Math.min(postSamples.length, 5)} of 5 recovery readings</small>
+      <button class="primary" disabled={measurementStage === 'recovery' && (postSamples.length < 3 || recoveryElapsed < 20)} onclick={completeSession}>{measurementStage !== 'recovery' ? 'See comparison' : postSamples.length >= 3 && recoveryElapsed >= 20 ? 'See comparison' : 'Measuring recovery…'} <span aria-hidden="true">→</span></button>
+      {#if measurementStage === 'recovery'}<small class="reading-count" aria-live="polite">{postSamples.length} readings · {recoveryElapsed}s of 20s minimum</small><button class="text-action" onclick={completeSession}>Finish without full measurement</button>{/if}
     </section>
 
   {:else}
@@ -434,9 +503,11 @@
       {#if measurementResult}
         <div class="result-card">
           <div><span>Body signal</span><strong>{measurementResult.bpmChange === null ? 'Not measured' : `${measurementResult.bpmChange > 0 ? '+' : ''}${Math.round(measurementResult.bpmChange)} BPM`}</strong><small>{measurementResult.bpmChange === null ? 'No Watch comparison was available.' : 'Median recovery heart rate compared with the starting median.'}</small></div>
+          <div><span>Recovery trend</span><strong>{measurementResult.recoverySlope === null ? 'Not enough data' : `${measurementResult.recoverySlope > 0 ? '+' : ''}${measurementResult.recoverySlope.toFixed(2)} BPM/s`}</strong><small>{measurementResult.recoverySlope === null ? 'At least three timed recovery readings are needed.' : 'Direction of heart-rate change during the recovery window.'}</small></div>
           <div><span>Your check-in</span><strong>{measurementResult.feelingChange > 0 ? '+' : ''}{measurementResult.feelingChange} points</strong><small>{preRating}/10 before · {postRating}/10 after</small></div>
         </div>
-        <p class="result-note">A lower number can suggest settling, but one short session cannot diagnose anxiety or prove that an exercise caused the change.</p>
+        <p class="result-quality"><strong>{measurementResult.confidence} confidence</strong> · {measurementResult.preSampleCount} starting and {measurementResult.postSampleCount} recovery readings{measurementResult.motionAffected ? ' · movement affected this comparison' : ' · low movement during measurement'}</p>
+        <p class="result-note">A lower number or downward recovery trend can suggest settling, but one short session cannot diagnose anxiety or prove that an exercise caused the change.</p>
       {/if}
       <div class="reflection">
         <span>Before you move on</span>
@@ -459,10 +530,11 @@
   .prompt-card,.senses-card{position:relative;overflow:hidden}.prompt-number,.sense-count{position:absolute;right:26px;top:8px;font:clamp(120px,24vw,190px) Georgia;color:var(--accent);line-height:1;z-index:0}.prompt-card>*:not(.prompt-number),.senses-card>*:not(.sense-count){position:relative;z-index:1}.mindful-anchor{width:100%;min-height:150px;margin:8px 0 12px;display:grid;place-items:center;position:relative}.mindful-anchor i{position:absolute;border:1px solid var(--accent-dark);border-radius:50%;opacity:.16}.mindful-anchor i:first-child{width:142px;height:142px}.mindful-anchor i:nth-child(2){width:106px;height:106px;opacity:.22}.mindful-anchor i:nth-child(3){width:72px;height:72px;background:var(--accent);border:0;opacity:1}.mindful-anchor span{position:relative;max-width:62px;color:var(--accent-dark);font:italic 14px/1.15 Georgia;text-align:center}.prompt-card .practice-note{margin:0 0 24px;padding:12px 14px;border-left:3px solid var(--accent);background:color-mix(in srgb,var(--accent) 22%,transparent);font-size:12px;line-height:1.5}.senses-card form{width:100%;display:flex;gap:8px;margin-top:22px}.senses-card input{min-width:0;flex:1;height:52px;padding:0 16px;border:1px solid var(--line);border-radius:16px;background:#f8f4ed}.senses-card form button{min-width:70px;border:0;border-radius:15px;background:var(--accent);font-weight:750;cursor:pointer}.senses-card form button:disabled{opacity:.4}.answer-list{width:100%;min-height:88px;display:flex;flex-wrap:wrap;align-content:flex-start;gap:8px;margin:16px 0}.answer-list button{min-height:40px;padding:0 10px 0 14px;border:0;border-radius:999px;background:var(--accent);cursor:pointer}.answer-list span{margin-left:8px;color:var(--accent-dark)}
   .completion{width:min(660px,100%);min-height:calc(100svh - 76px);margin:auto;padding:clamp(44px,9vw,100px) 24px;display:flex;flex-direction:column;align-items:center;text-align:center;position:relative;z-index:1}.completion-mark{width:86px;height:86px;margin-bottom:28px;border-radius:50%;display:grid;place-items:center;background:var(--accent)}.completion-mark svg{width:45px;fill:none;stroke:var(--accent-dark);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}.completion h1{font-size:clamp(48px,8vw,72px)}.completion>p:not(.eyebrow){max-width:480px;margin:22px 0;color:var(--muted);font-size:15px;line-height:1.65}.reflection{width:min(100%,480px);margin:12px 0 30px;padding:18px;border:1px solid var(--line);border-radius:18px;background:#fffdf9;text-align:left}.reflection span{display:block;margin-bottom:6px;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.1em}.reflection strong{font:18px/1.35 Georgia}.completion-actions{flex-wrap:wrap}.completion-actions .primary,.completion-actions .secondary{min-width:180px}
   .feeling-scale{width:min(100%,470px);display:block;margin:12px 0 18px;padding:14px 16px;border:1px solid var(--line);border-radius:17px;background:#fffdf9}.feeling-scale>span,.feeling-scale>small{display:flex;justify-content:space-between;gap:16px}.feeling-scale strong{font-size:11px}.feeling-scale b{font-size:12px;color:var(--accent-dark)}.feeling-scale input{width:100%;height:30px;margin:4px 0 0;accent-color:var(--accent-dark)}.feeling-scale small{font-size:9px;color:var(--muted)}
+  .preflight-card{width:min(100%,470px);margin:0 0 12px;padding:14px 16px;border:1px solid var(--line);border-radius:17px;background:#fffdf9}.preflight-card>div{display:grid;grid-template-columns:10px 1fr auto;align-items:center;gap:8px}.preflight-card i{width:9px;height:9px;border-radius:50%;background:#9a958c}.preflight-card.ready i{background:#3f9187;box-shadow:0 0 0 4px #3f918720}.preflight-card.attention i{background:#b95e4d}.preflight-card strong{font-size:11px}.preflight-card span{font-size:9px;color:var(--muted)}.preflight-card p{margin:8px 0 0;font-size:10px;line-height:1.45;color:var(--muted)}.preflight-card button{min-height:44px;margin-top:4px;padding:0;border:0;background:transparent;color:var(--accent-dark);font-size:10px;font-weight:750;text-decoration:underline;text-underline-offset:3px;cursor:pointer}
   .measurement-stage{width:min(620px,100%);min-height:calc(100svh - 76px);margin:auto;padding:clamp(40px,8vw,90px) 24px 48px;display:flex;flex-direction:column;align-items:center;text-align:center;position:relative;z-index:1}.measurement-stage h1{max-width:580px;font-size:clamp(42px,8vw,66px)}.measurement-stage>p:not(.eyebrow){max-width:500px;margin:20px 0;color:var(--muted);font-size:14px;line-height:1.6}.watch-pulse{width:84px;height:84px;margin-bottom:26px;border-radius:28px;display:grid;place-items:center;background:#eee8dd;color:#817d75;box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 55%,transparent)}.watch-pulse.connected{background:var(--accent);color:var(--accent-dark);animation:watch-pulse 2.2s ease-out infinite}.watch-pulse svg{width:38px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}.measurement-reading{width:min(100%,430px);margin:6px 0 20px;padding:18px;border:1px solid var(--line);border-radius:20px;background:#fffdf9}.measurement-reading>span{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}.measurement-reading>strong{display:block;margin:8px 0;font:42px Georgia}.measurement-reading strong small{font:10px Manrope;color:var(--muted)}.measurement-reading>div{height:5px;border-radius:999px;background:#e3ddd3;overflow:hidden}.measurement-reading>div i{display:block;height:100%;border-radius:inherit;background:var(--accent-dark);transition:width .25s ease}.measurement-reading>small{display:block;margin-top:8px;font-size:9px;color:var(--muted)}.measurement-stage>.primary{min-width:min(100%,300px)}.text-action{min-height:44px;margin-top:8px;padding:0 12px;border:0;background:transparent;color:var(--muted);font-size:11px;text-decoration:underline;text-underline-offset:4px;cursor:pointer}.comparison-preview{width:min(100%,430px);display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:4px 0 12px}.comparison-preview>div{padding:15px;border:1px solid var(--line);border-radius:18px;background:#fffdf9}.comparison-preview span{display:block;font-size:9px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}.comparison-preview strong{display:block;margin-top:7px;font:25px Georgia}.comparison-preview small{font:9px Manrope;color:var(--muted)}.recovery-scale{margin:4px 0 18px;text-align:left}.reading-count{margin-top:9px;color:var(--muted);font-size:9px}
   .connection-status{min-height:36px;margin-top:18px;padding:0 12px;border-radius:999px;display:flex;align-items:center;gap:8px;background:#eee8dd;color:#625f59;font-size:11px}.connection-status i{width:8px;height:8px;border-radius:50%;background:#9a958c}.connection-status.connected{background:#dcece5;color:#315f55}.connection-status.connected i{background:#3f9187;box-shadow:0 0 0 4px #3f918726}.connection-status.error{background:#f5dfd8;color:#7e4035}.connection-status.error i{background:#b95e4d}.retry-watch{min-width:min(100%,300px)}
-  .result-card{width:min(100%,480px);display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:6px 0 0;text-align:left}.result-card>div{padding:16px;border:1px solid var(--line);border-radius:18px;background:#fffdf9}.result-card span{font-size:9px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}.result-card strong{display:block;margin:7px 0 4px;font:21px Georgia}.result-card small{font-size:9px;line-height:1.4;color:var(--muted)}.completion .result-note{margin:10px 0 4px!important;font-size:10px!important}
+  .result-card{width:min(100%,560px);display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:6px 0 0;text-align:left}.result-card>div{padding:16px;border:1px solid var(--line);border-radius:18px;background:#fffdf9}.result-card span{font-size:9px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}.result-card strong{display:block;margin:7px 0 4px;font:19px Georgia}.result-card small{font-size:9px;line-height:1.4;color:var(--muted)}.completion .result-quality{margin:12px 0 0!important;padding:8px 11px;border-radius:12px;background:var(--accent);font-size:10px!important;text-transform:capitalize}.completion .result-note{margin:10px 0 4px!important;font-size:10px!important}
   @keyframes breathe-in{from{transform:scale(.76)}to{transform:scale(1)}}@keyframes hold{from,to{transform:scale(1)}}@keyframes breathe-out{from{transform:scale(1)}to{transform:scale(.76)}}@keyframes watch-pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 60%,transparent)}70%,100%{box-shadow:0 0 0 18px transparent}}
-  @media(max-width:700px){.topbar{grid-template-columns:44px 1fr 72px;padding-inline:16px}.wordmark{font-size:13px}.intro{min-height:calc(100svh - 76px);grid-template-columns:1fr;gap:26px;padding:32px 24px 48px}.hero-visual{order:-1;width:min(54vw,230px)}.intro h1{font-size:clamp(43px,13vw,60px)}.lede{font-size:14px;margin-top:18px}.intro-meta{margin:20px 0}.intro .primary{width:100%}.practice-shell{padding:22px 16px 32px}.practice-card{min-height:calc(100svh - 160px);padding:28px 22px;border-radius:25px}.practice-card h1{font-size:clamp(38px,11vw,52px)}.prompt-number,.sense-count{right:14px}.completion-actions{flex-direction:column}.completion-actions>*{width:100%}}
+  @media(max-width:700px){.topbar{grid-template-columns:44px 1fr 72px;padding-inline:16px}.wordmark{font-size:13px}.intro{min-height:calc(100svh - 76px);grid-template-columns:1fr;gap:26px;padding:32px 24px 48px}.hero-visual{order:-1;width:min(54vw,230px)}.intro h1{font-size:clamp(43px,13vw,60px)}.lede{font-size:14px;margin-top:18px}.intro-meta{margin:20px 0}.intro .primary{width:100%}.practice-shell{padding:22px 16px 32px}.practice-card{min-height:calc(100svh - 160px);padding:28px 22px;border-radius:25px}.practice-card h1{font-size:clamp(38px,11vw,52px)}.prompt-number,.sense-count{right:14px}.result-card{grid-template-columns:1fr}.completion-actions{flex-direction:column}.completion-actions>*{width:100%}}
   @media(prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
 </style>
