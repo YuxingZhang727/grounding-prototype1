@@ -61,6 +61,7 @@
   let isExportingJournal = false;
   let journalSaveError = '';
   let journalExportMessage = '';
+  let standaloneStickerFlow = false;
   const MIN_STROKE_LENGTH = 5;
 
   const placements = [
@@ -341,7 +342,7 @@
     resetSelection();
   }
 
-  function keepCutout() {
+  async function keepCutout() {
     const index = fragments.length;
     const sourceImage = transformedImage || segmentedImage;
     if (!sourceImage) return;
@@ -357,7 +358,16 @@
       ...placementFor(index)
     }];
     savedStickers = [sticker, ...savedStickers];
-    void saveSticker(sticker).catch(() => { savedStickers = savedStickers.filter(item => item.id !== sticker.id); });
+    try {
+      await saveSticker(sticker);
+    } catch {
+      savedStickers = savedStickers.filter(item => item.id !== sticker.id);
+      return;
+    }
+    if (standaloneStickerFlow) {
+      window.location.href = '/app?tab=archive';
+      return;
+    }
     step = 'fragment';
   }
 
@@ -702,6 +712,10 @@
   }
 
   function restart() {
+    if (standaloneStickerFlow) {
+      window.location.href = '/app?tab=archive';
+      return;
+    }
     stopCamera();
     fragments = [];
     capturedImage = '';
@@ -715,6 +729,21 @@
     loadStickers().then(value => savedStickers=value).catch(() => {});
     loadRolls().then(value => soundRolls=value).catch(() => {});
     const start = new URLSearchParams(window.location.search).get('start');
+    if (start === 'sticker') {
+      standaloneStickerFlow = true;
+      const source = sessionStorage.getItem('grounding-sticker-source');
+      sessionStorage.removeItem('grounding-sticker-source');
+      if (source) {
+        void prepareCapturedPhoto(source).then((prepared) => {
+          capturedImage = prepared;
+          clearSegmentation();
+          resetSelection();
+          step = 'crop';
+        });
+      } else {
+        void begin();
+      }
+    }
     if (start === 'see') begin();
     if (start === 'sound') step = 'sound';
     const restoreStage = () => {
@@ -736,13 +765,13 @@
   <meta name="description" content="Translate touch and sight into a personal grounding collage." />
 </svelte:head>
 
-{#if step !== 'welcome'}
+{#if step !== 'welcome' && !standaloneStickerFlow}
   {#key step}<GroundingSteps active={step === 'sound' || step === 'arrange' || step === 'finish' ? 'hear' : 'see'} onselect={selectGroundingStage} />{/key}
 {/if}
 <main class:dark={step === 'camera'} class:canvas-mode={step === 'arrange' || step === 'finish'} class:in-flow={step !== 'welcome'}>
   <header>
-    <button class="wordmark" onclick={restart} aria-label="Return to start">{step === 'welcome' || step === 'arrange' || step === 'finish' ? 'GROUNDING' : step === 'sound' ? 'HEAR' : 'SEE'}<span>·</span></button>
-    {#if step !== 'welcome' && step !== 'finish'}
+    <button class="wordmark" onclick={restart} aria-label={standaloneStickerFlow ? 'Return to sticker collection' : 'Return to start'}>{standaloneStickerFlow ? 'STICKER' : step === 'welcome' || step === 'arrange' || step === 'finish' ? 'GROUNDING' : step === 'sound' ? 'HEAR' : 'SEE'}<span>·</span></button>
+    {#if step !== 'welcome' && step !== 'finish' && !standaloneStickerFlow}
       <div class="progress" aria-label={`${fragments.length} things gathered`}>
         <span class="gathered-count">{fragments.length} gathered</span>
         {#each fragments as _}
@@ -960,7 +989,7 @@
         {#if !transformedImage && segmentedImage}
           <button class="primary compact" onclick={transformCutout} disabled={isTransforming}>{directAiMode ? 'Detect & make sticker' : 'Make collage piece'} <span>→</span></button>
         {:else if transformedImage}
-          <button class="secondary compact" onclick={keepCutout}>Use transformed piece <span>→</span></button>
+          <button class="secondary compact" onclick={keepCutout}>{standaloneStickerFlow ? 'Save sticker' : 'Use transformed piece'} <span>→</span></button>
           <button class="primary compact" onclick={transformCutout} disabled={isTransforming}>Try again <span>↻</span></button>
         {/if}
       </div>

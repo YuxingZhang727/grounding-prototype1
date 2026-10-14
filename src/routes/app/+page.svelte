@@ -3,7 +3,7 @@
   import { goto } from '$app/navigation';
   import AppIcon from '$lib/AppIcon.svelte';
   import { deleteRoll, loadRolls, tapeImage, type SoundRoll } from '$lib/sound-tape';
-  import { deleteJournal, deleteSticker, loadJournals, loadStickers, saveSticker, type SavedJournal, type SavedSticker } from '$lib/artifact-store';
+  import { deleteJournal, deleteSticker, loadJournals, loadStickers, type SavedJournal, type SavedSticker } from '$lib/artifact-store';
   import { exportImage, journalFileName } from '$lib/image-export';
   import { estimateArousal, type ArousalEstimate, type InterventionType } from '$lib/arousal-estimator';
   import {
@@ -47,7 +47,7 @@
   let journals: SavedJournal[] = [];
   let exportingJournalId = '';
   let exportNotice = '';
-  let isImportingSticker = false;
+  let isPreparingStickerPhoto = false;
   let stickerImportMessage = '';
   let stickerImportFailed = false;
   let notice = '';
@@ -457,12 +457,12 @@
       image.src = source;
     });
   }
-  async function importSticker(event: Event) {
+  async function makeStickerFromPhoto(event: Event) {
     const input = event.currentTarget as HTMLInputElement;
     const file = input.files?.[0];
     input.value = '';
-    if (!file || isImportingSticker) return;
-    isImportingSticker = true;
+    if (!file || isPreparingStickerPhoto) return;
+    isPreparingStickerPhoto = true;
     stickerImportMessage = '';
     stickerImportFailed = false;
     try {
@@ -471,17 +471,13 @@
       }
       if (file.size > 25 * 1024 * 1024) throw new Error('Choose an image smaller than 25 MB.');
       const prepared = await readStickerImage(file);
-      const name = file.name.replace(/\.[^.]+$/, '').trim().slice(0, 48) || `Imported sticker ${stickers.length + 1}`;
-      const sticker: SavedSticker = { id:crypto.randomUUID(), name, created:Date.now(), ...prepared };
-      await saveSticker(sticker);
-      stickers = [sticker, ...stickers];
-      stickerImportMessage = `${name} was added to your sticker collection.`;
-      navigator.vibrate?.(10);
+      sessionStorage.setItem('grounding-sticker-source', prepared.image);
+      window.location.href = '/?start=sticker&return=archive';
     } catch (error) {
       stickerImportFailed = true;
-      stickerImportMessage = error instanceof Error ? error.message : 'The sticker could not be imported.';
+      stickerImportMessage = error instanceof Error ? error.message : 'The photo could not be prepared.';
     } finally {
-      isImportingSticker = false;
+      isPreparingStickerPhoto = false;
     }
   }
   async function exportJournal(journal: SavedJournal) {
@@ -950,9 +946,9 @@
             <div><p class="eyebrow">Reusable visual pieces</p><h2>Sticker Collection</h2></div>
             <div class="collection-actions">
               <span>{stickers.length}</span>
-              <label class="sticker-upload" class:disabled={isImportingSticker}>
-                {isImportingSticker ? 'Adding…' : 'Upload sticker'}
-                <input type="file" accept="image/png,image/jpeg,image/webp" onchange={importSticker} disabled={isImportingSticker}/>
+              <label class="sticker-upload" class:disabled={isPreparingStickerPhoto}>
+                {isPreparingStickerPhoto ? 'Preparing…' : 'Upload photo'}
+                <input type="file" accept="image/png,image/jpeg,image/webp" aria-label="Upload photo to make a sticker" onchange={makeStickerFromPhoto} disabled={isPreparingStickerPhoto}/>
               </label>
             </div>
           </div>
