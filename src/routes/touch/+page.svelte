@@ -137,7 +137,7 @@
 
       {#if step === 'texture'}
         <span class="step-count">01 / 02</span>
-        <h1>What did it<br />feel like?</h1>
+        <h1>What did it<br /> feel like?</h1>
         <p class="guidance">Choose one or two words that feel closest.</p>
         <div class="texture-grid">
           {#each textureOptions as texture}
@@ -268,27 +268,27 @@
   .haptic-guide button { min-height:44px; padding:0 14px; flex:0 0 auto; border:1px solid #aaa89f; border-radius:100px; background:rgba(255,255,255,.32); cursor:pointer; }
   @media (max-width:900px) {
     main { height:100dvh; overflow:hidden; }
-    .touch-layout { height:100dvh; min-height:0; display:flex; flex-direction:column; gap:12px; align-items:stretch; overflow-y:auto; overscroll-behavior-y:contain; -webkit-overflow-scrolling:touch; padding:calc(66px + env(safe-area-inset-top)) 20px max(20px, calc(12px + env(safe-area-inset-bottom))); }
+    .touch-layout { height:100dvh; min-height:0; display:flex; flex-direction:column; gap:8px; align-items:stretch; overflow-y:auto; overscroll-behavior-y:contain; -webkit-overflow-scrolling:touch; padding:calc(66px + env(safe-area-inset-top)) 20px max(16px, calc(10px + env(safe-area-inset-bottom))); }
     .question-panel { max-width:560px; width:100%; margin:0 auto; flex:0 0 auto; }
     .texture-preview { order:-1; width:min(100%,560px); max-width:100%; align-self:center; justify-self:auto; flex:0 0 auto; gap:4px; }
-    .texture-panel { display:block; width:100%; height:clamp(148px,19svh,164px); aspect-ratio:auto; box-shadow:3px 3px 0 rgba(255,255,255,.5),6px 6px 0 rgba(112,101,81,.07),0 12px 30px rgba(38,42,36,.13); transform:none; }
+    .texture-panel { display:block; width:100%; height:clamp(270px,34svh,320px); aspect-ratio:auto; box-shadow:3px 3px 0 rgba(255,255,255,.5),6px 6px 0 rgba(112,101,81,.07),0 12px 30px rgba(38,42,36,.13); transform:none; }
     .preview-label { left:10px; top:10px; padding:6px 8px; font-size:8px; }
     .texture-panel p { left:10px; right:10px; bottom:10px; max-width:calc(100% - 20px); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding:6px 8px; }
-    .haptic-guide { min-height:44px; font-size:10px; }
+    .haptic-guide { min-height:40px; font-size:10px; }
     .haptic-guide button { min-height:44px; }
     .eyebrow { display:none; }
     .step-count { margin-bottom:5px; font-size:9px; }
-    h1 { font-size:clamp(28px,7.6vw,32px); line-height:1.05; margin-bottom:7px; }
+    h1 { font-size:clamp(28px,7.6vw,32px); line-height:1.08; margin-bottom:6px; }
     .question-panel h1 br { display:none; }
-    .guidance { margin-bottom:12px; font-size:13px; line-height:1.4; }
-    .texture-grid { grid-template-columns:repeat(2,1fr); gap:8px; margin-bottom:8px; }
-    .texture-grid button { height:44px; touch-action:manipulation; }
+    .guidance { margin-bottom:9px; font-size:12px; line-height:1.35; }
+    .texture-grid { grid-template-columns:repeat(4,minmax(0,1fr)); gap:6px; margin-bottom:6px; }
+    .texture-grid button { height:44px; padding:0 4px; font-size:12px; touch-action:manipulation; }
     .texture-grid button.active { transform:none; }
-    .custom-texture { min-height:44px; margin:0 0 12px; }
+    .custom-texture { min-height:42px; margin:0 0 8px; }
     .custom-texture input { padding:10px 2px; }
     .custom-texture button { min-width:44px; min-height:44px; }
     .custom-choice { margin:-7px 0 10px; }
-    .primary,.secondary { height:48px; min-height:48px; }
+    .primary,.secondary { height:46px; min-height:46px; }
     .question-panel>.primary { width:100%; }
     main.result .touch-layout { gap:12px; }
     main.result h1 { max-width:13ch; font-size:clamp(27px,7.2vw,32px); line-height:1.04; text-wrap:balance; }
@@ -303,10 +303,11 @@
   }
   @media (max-width:380px) and (orientation:portrait) {
     .touch-layout { padding-left:16px; padding-right:16px; }
-    .texture-panel { height:144px; }
+    .texture-panel { height:clamp(250px,31svh,290px); }
     h1 { font-size:28px; }
     main.result h1 { font-size:27px; }
     .primary,.secondary { padding-left:18px; padding-right:18px; }
+    .texture-grid { grid-template-columns:repeat(2,1fr); gap:6px; }
   }
   @media (prefers-reduced-motion:reduce) {
     *,*::before,*::after { scroll-behavior:auto !important; transition-duration:.01ms !important; animation-duration:.01ms !important; }
