@@ -871,9 +871,13 @@
             <div class="ecg-summary" class:unavailable={!healthTrends?.ecg?.available}>
               <div>
                 <strong>ECG recordings</strong>
-                <span>{healthTrends?.ecg?.available ? `${healthTrends.ecg.count} available in Apple Health` : 'No recordings available yet'}</span>
+                <span>{healthTrends?.ecg?.available ? `${healthTrends.ecg.count} available in Apple Health` : 'No readable recordings yet'}</span>
               </div>
-              <small>{healthTrends?.ecg?.available ? 'View-only · not used for today’s feeling' : 'Record one in the ECG app on Apple Watch'}</small>
+              {#if healthTrends?.ecg?.available}
+                <small>View-only · not used for today’s feeling</small>
+              {:else}
+                <button class="ecg-access" onclick={connectHealth}>Review ECG access</button>
+              {/if}
             </div>
           {/if}
           <div class="health-actions">
@@ -1158,6 +1162,6 @@
   .health-detail-empty strong{font-size:14px}
   .health-detail-empty p{margin:7px 0 0;font-size:11px;line-height:1.5;color:var(--muted)}
   .practice-trend{margin-top:14px}.bars i{flex:1;max-width:38px;min-height:8px}.bars i b{position:absolute;top:-17px;width:100%;text-align:center;font:9px/1 Manrope}.method-dot{flex:none}.method-dot.mindfulness{background:#ddd6ee}.method-dot.grounding{background:#cfdfc0}
-  .ecg-summary{margin-top:12px;padding:13px;border-radius:15px;background:var(--cream);display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.ecg-summary.unavailable{background:#f5f2ec}.ecg-summary>div{display:flex;flex-direction:column;gap:3px}.ecg-summary strong{font-size:12px}.ecg-summary span,.ecg-summary small{font-size:9px;line-height:1.45;color:var(--muted)}.ecg-summary small{max-width:180px;text-align:right}
+  .ecg-summary{margin-top:12px;padding:13px;border-radius:15px;background:var(--cream);display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.ecg-summary.unavailable{background:#f5f2ec}.ecg-summary>div{display:flex;flex-direction:column;gap:3px}.ecg-summary strong{font-size:12px}.ecg-summary span,.ecg-summary small{font-size:9px;line-height:1.45;color:var(--muted)}.ecg-summary small{max-width:180px;text-align:right}.ecg-access{min-height:44px;flex:none;padding:0 11px;border:1px solid var(--border);border-radius:13px;background:var(--surface);font-size:9px;font-weight:700;cursor:pointer}
   .health-intro{margin:15px 0 0;font-size:12px;line-height:1.5;color:var(--muted)}.health-range{display:flex;gap:7px;margin-top:14px}.health-range button{min-height:44px;flex:1;border:1px solid var(--border);border-radius:14px;background:var(--surface);font-size:11px;font-weight:700;cursor:pointer}.health-range button.active{background:var(--teal);border-color:#7aa59d}.health-point-value{margin:10px 0 0;padding:10px 12px;border-radius:13px;background:var(--sun-soft);display:flex;justify-content:space-between;font-size:11px}.health-line-chart circle.selected{fill:#b26e54;stroke-width:4}.feeling-method>p{margin:9px 0 0;font-size:11px;line-height:1.55;color:var(--muted)}
 </style>

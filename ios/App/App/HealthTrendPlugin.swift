@@ -171,7 +171,10 @@ class HealthTrendPlugin: CAPPlugin, CAPBridgedPlugin {
         }
 
         group.enter()
-        electrocardiogramSummary(start: start, end: end) { result in
+        // ECG is an occasional recording rather than a daily trend. Search the
+        // complete Health history so an older recording is not hidden merely
+        // because the chart is showing a shorter range.
+        electrocardiogramSummary() { result in
             switch result {
             case .success(let summary): record("ecg", summary)
             case .failure(let error):
@@ -369,13 +372,10 @@ class HealthTrendPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     private func electrocardiogramSummary(
-        start: Date,
-        end: Date,
         completion: @escaping (Result<[String: Any], Error>) -> Void
     ) {
         let type = HKObjectType.electrocardiogramType()
-        let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: [])
-        let query = HKSampleQuery(sampleType: type, predicate: predicate, limit: HKObjectQueryNoLimit,
+        let query = HKSampleQuery(sampleType: type, predicate: nil, limit: HKObjectQueryNoLimit,
                                   sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)]) { _, samples, error in
             if let error { completion(.failure(error)); return }
             let ecgs = (samples ?? []).compactMap { $0 as? HKElectrocardiogram }
