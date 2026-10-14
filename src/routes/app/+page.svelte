@@ -68,10 +68,10 @@
   type HealthReading = { day:string; value:number };
   type ChartPoint = HealthReading & { x:number; y:number };
   let selectedHealthChart: { points:string; chartPoints:ChartPoint[]; baselineY:number | null; minimum:number; maximum:number; lastX:number; lastY:number };
-  type HealthRange = 'day' | 'week' | 'month' | 'all';
+  type HealthRange = 'week' | 'month' | 'all';
   const healthRanges: { id:HealthRange; label:string; days:number }[] = [
-    { id:'day', label:'Day', days:1 }, { id:'week', label:'Week', days:7 },
-    { id:'month', label:'Month', days:30 }, { id:'all', label:'All', days:5000 }
+    { id:'week', label:'Week', days:7 }, { id:'month', label:'Month', days:30 },
+    { id:'all', label:'All', days:5000 }
   ];
   let healthRange: HealthRange = 'month';
   let detailHealthTrends: TrendsPayload | null = null;
