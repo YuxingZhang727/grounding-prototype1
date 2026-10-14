@@ -22,6 +22,7 @@
     onWatchAvailabilityChanged,
     onWatchSignal,
     requestLatestWatchSignal,
+    startWatchCalibration as beginWatchCalibration,
     startWatchMeasurement,
     stopWatchMeasurement,
     type WatchAvailability,
@@ -294,17 +295,10 @@
   }
   async function startWatchCalibration() {
     if (watchCalibrationState === 'starting' || watchCalibrationState === 'running') return;
-    if (watchSnapshot.isRunning) {
-      watchCalibrationState = 'running';
-      watchCalibrationMessage = calibrationProgressMessage();
-      const latest = await requestLatestWatchSignal().catch(() => ({ available:false } as WatchSignalSnapshot));
-      if (latest.kind === 'snapshot') acceptWatchSnapshot(latest);
-      return;
-    }
     watchCalibrationState = 'starting';
     watchCalibrationMessage = 'Opening a short calibration session on your Watch…';
     try {
-      const started = await startWatchMeasurement();
+      const started = await beginWatchCalibration();
       if (!started) throw new Error('Calibration could not start');
       watchCalibrationMessage = 'Watch opened. Waiting for the first reading…';
       window.setTimeout(() => {
@@ -391,7 +385,6 @@
       localStorage.setItem(watchCalibrationKey, JSON.stringify(watchCalibration));
       watchCalibrationState = 'complete';
       watchCalibrationMessage = `Calibration saved at ${Math.round(watchSnapshot.baselineBPM)} bpm.`;
-      void stopWatchMeasurement().catch(() => false);
     }
   }
   function checkInTime(timestamp: string) {
@@ -1028,7 +1021,7 @@
               {#if watchCalibrationState === 'running'}
                 <div class="calibration-reading"><strong>{typeof watchSnapshot.bpm === 'number' ? Math.round(watchSnapshot.bpm) : '—'}</strong><span>bpm · live from Watch</span></div>
                 <div class="calibration-progress" aria-label={`${baselineSampleCount()} of ${baselineTarget()} calibration readings`}><i style={`width:${(baselineSampleCount() / baselineTarget()) * 100}%`}></i></div>
-                <small>{baselineSampleCount()} / {baselineTarget()} readings · keep still</small>
+                <small>{baselineSampleCount()} of {baselineTarget()} still readings · keep still</small>
               {:else if watchCalibration}
                 <small>Last calibrated {sessionWhen(new Date(watchCalibration.completedAt).getTime())}</small>
               {/if}

@@ -39,6 +39,7 @@ type WatchSignalNative = {
   getLatest(): Promise<WatchSignalSnapshot>;
   requestLatest(): Promise<WatchSignalSnapshot>;
   startMeasurement(): Promise<{ started: boolean }>;
+  startCalibration(): Promise<{ started: boolean }>;
   stopMeasurement(): Promise<{ delivered: boolean }>;
   getCheckIns(): Promise<{ entries: WatchCheckIn[] }>;
   addListener(
@@ -81,6 +82,12 @@ export async function requestLatestWatchSignal(): Promise<WatchSignalSnapshot> {
 export async function startWatchMeasurement(): Promise<boolean> {
   if (!isWatchSignalNative()) return false;
   const result = await nativeWatchSignal.startMeasurement();
+  return result.started;
+}
+
+export async function startWatchCalibration(): Promise<boolean> {
+  if (!isWatchSignalNative()) return false;
+  const result = await nativeWatchSignal.startCalibration();
   return result.started;
 }
 

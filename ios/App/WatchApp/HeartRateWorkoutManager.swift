@@ -60,6 +60,8 @@ final class HeartRateWorkoutManager: NSObject, ObservableObject {
     private var startedAt: Date?
     private var baselineSamples: [Double] = []
     private var lastSnapshotSentAt = Date.distantPast
+    private var isCalibrationSession = false
+    private var calibrationStopScheduled = false
 
     override init() {
         super.init()
@@ -72,6 +74,10 @@ final class HeartRateWorkoutManager: NSObject, ObservableObject {
         connectivity.onMeasurementCommand = { [weak self] command in
             Task { @MainActor [weak self] in
                 if command == "startMeasurement" {
+                    self?.isCalibrationSession = false
+                    await self?.requestAccessAndStart()
+                } else if command == "startCalibration" {
+                    self?.isCalibrationSession = true
                     await self?.requestAccessAndStart()
                 } else if command == "stopMeasurement" {
                     self?.stop()
@@ -118,6 +124,7 @@ final class HeartRateWorkoutManager: NSObject, ObservableObject {
         baselineBPM = nil
         bpm = nil
         elapsedTime = 0
+        calibrationStopScheduled = false
 
         let session = try HKWorkoutSession(healthStore: healthStore, configuration: configuration)
         let builder = session.associatedWorkoutBuilder()
@@ -164,6 +171,8 @@ final class HeartRateWorkoutManager: NSObject, ObservableObject {
         workoutBuilder = nil
         startedAt = nil
         isRunning = false
+        isCalibrationSession = false
+        calibrationStopScheduled = false
         motionIntensity = 0
         signalState = .ready
         sendSnapshot(force: true)
@@ -231,6 +240,16 @@ final class HeartRateWorkoutManager: NSObject, ObservableObject {
             }
         }
         updateSignalState()
+        if isCalibrationSession, baselineSamples.count >= 5, !calibrationStopScheduled {
+            calibrationStopScheduled = true
+            sendSnapshot(force: true)
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(1))
+                guard let self, self.isRunning, self.isCalibrationSession else { return }
+                self.stop()
+            }
+            return
+        }
         // The first sensor value should reach the phone immediately instead of
         // waiting for the regular one-second telemetry cadence.
         sendSnapshot(force: isFirstReading)

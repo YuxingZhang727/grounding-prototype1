@@ -14,6 +14,7 @@ final class WatchSignalPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "getLatest", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "requestLatest", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "startMeasurement", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "startCalibration", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "stopMeasurement", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "getCheckIns", returnType: CAPPluginReturnPromise)
     ]
@@ -59,6 +60,14 @@ final class WatchSignalPlugin: CAPPlugin, CAPBridgedPlugin {
     /// The Watch receives this configuration in its application delegate and
     /// creates the actual HKWorkoutSession there.
     @objc func startMeasurement(_ call: CAPPluginCall) {
+        startWatchSession(call, command: "startMeasurement")
+    }
+
+    @objc func startCalibration(_ call: CAPPluginCall) {
+        startWatchSession(call, command: "startCalibration")
+    }
+
+    private func startWatchSession(_ call: CAPPluginCall, command: String) {
         let configuration = HKWorkoutConfiguration()
         configuration.activityType = .mindAndBody
         configuration.locationType = .indoor
@@ -67,7 +76,7 @@ final class WatchSignalPlugin: CAPPlugin, CAPBridgedPlugin {
                 // startWatchApp wakes/opens the companion app. The explicit
                 // command also covers the case where it was already awake and
                 // guarantees that the calibration manager receives a start.
-                self.receiver.sendCommand("startMeasurement") { _ in
+                self.receiver.sendCommand(command) { _ in
                     DispatchQueue.main.async { call.resolve(["started": true]) }
                 }
             } else {
