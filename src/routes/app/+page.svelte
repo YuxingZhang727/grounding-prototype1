@@ -92,6 +92,7 @@
   ];
   const moodStorageKey = 'grounding.today.mood';
   const moodHistoryKey = 'grounding.mood.history.v1';
+  const appLocale = 'en-US';
   type MoodCheckIn = { id:string; mood:MoodId; timestamp:number };
   type GuidedSession = { mode:'breathing'|'mindfulness'|'grounding'; completedAt:number; preRating?:number; postRating?:number };
   let selectedMood: MoodId | null = null;
@@ -160,7 +161,7 @@
     const date = value instanceof Date ? value : new Date(value);
     return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
   }
-  function todayLabel() { return new Intl.DateTimeFormat(undefined, { weekday:'long', month:'long', day:'numeric' }).format(new Date()); }
+  function todayLabel() { return new Intl.DateTimeFormat(appLocale, { weekday:'long', month:'long', day:'numeric' }).format(new Date()); }
   function greeting() { const hour = new Date().getHours(); return hour < 12 ? 'Good morning.' : hour < 18 ? 'Good afternoon.' : 'Good evening.'; }
 
   function openFeelingDetails(event: MouseEvent) {
@@ -200,7 +201,7 @@
     const latest = healthValue(metric);
     const baseline = metric.baseline === null
       ? 'baseline building'
-      : `usual ${new Intl.NumberFormat(undefined, { maximumFractionDigits:1 }).format(metric.baseline)} ${details?.unit ?? metric.unit}`;
+      : `usual ${new Intl.NumberFormat(appLocale, { maximumFractionDigits:1 }).format(metric.baseline)} ${details?.unit ?? metric.unit}`;
     return `${latest} ${details?.unit ?? metric.unit} · ${baseline}`;
   }
 
@@ -290,7 +291,7 @@
   function checkInTime(timestamp: string) {
     const date = new Date(timestamp);
     if (Number.isNaN(date.getTime())) return '';
-    return new Intl.DateTimeFormat(undefined, { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' }).format(date);
+    return new Intl.DateTimeFormat(appLocale, { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' }).format(date);
   }
 
   function readTab(): Tab {
@@ -402,7 +403,7 @@
     }
   }
   function journalDate(created: number) {
-    return new Intl.DateTimeFormat(undefined, { month:'short', day:'numeric', year:'numeric' }).format(created);
+    return new Intl.DateTimeFormat(appLocale, { month:'short', day:'numeric', year:'numeric' }).format(created);
   }
   function healthProfileSummary() {
     if (healthState === 'checking') return 'Checking availability…';
@@ -479,7 +480,7 @@
     detailHealthLoading = false;
   }
   function chartDay(day: string) {
-    return new Intl.DateTimeFormat(undefined, { month:'short', day:'numeric' }).format(new Date(`${day}T12:00:00`));
+    return new Intl.DateTimeFormat(appLocale, { month:'short', day:'numeric' }).format(new Date(`${day}T12:00:00`));
   }
   function healthChartSummary(metric: TrendMetric | undefined) {
     if (!metric?.series.length) return 'No historical readings are available.';
@@ -498,11 +499,11 @@
   function healthValue(metric: TrendMetric | undefined) {
     if (!metric?.available || metric.latest === null) return '—';
     const maximumFractionDigits = metric.key === 'respiratoryRate' ? 1 : 0;
-    return new Intl.NumberFormat(undefined, { maximumFractionDigits }).format(metric.latest);
+    return new Intl.NumberFormat(appLocale, { maximumFractionDigits }).format(metric.latest);
   }
   function healthDay(metric: TrendMetric | undefined) {
     if (!metric?.latestDay) return 'No recent reading';
-    return new Intl.DateTimeFormat(undefined, { month:'short', day:'numeric' }).format(new Date(`${metric.latestDay}T12:00:00`));
+    return new Intl.DateTimeFormat(appLocale, { month:'short', day:'numeric' }).format(new Date(`${metric.latestDay}T12:00:00`));
   }
   function healthDescription(key: TrendMetric['key']) {
     const metric = healthMetric(key);
@@ -517,10 +518,10 @@
   }
   function sessionWhen(timestamp: number) {
     const today = localDay(new Date());
-    return `${localDay(timestamp) === today ? 'Today' : new Intl.DateTimeFormat(undefined, { month:'short', day:'numeric' }).format(timestamp)} · ${new Intl.DateTimeFormat(undefined, { hour:'numeric', minute:'2-digit' }).format(timestamp)}`;
+    return `${localDay(timestamp) === today ? 'Today' : new Intl.DateTimeFormat(appLocale, { month:'short', day:'numeric' }).format(timestamp)} · ${new Intl.DateTimeFormat(appLocale, { hour:'numeric', minute:'2-digit' }).format(timestamp)}`;
   }
   function weeklySessionCounts() {
-    const formatter = new Intl.DateTimeFormat(undefined, { weekday:'narrow' });
+    const formatter = new Intl.DateTimeFormat(appLocale, { weekday:'narrow' });
     return Array.from({ length:7 }, (_, index) => {
       const date = new Date(); date.setHours(0,0,0,0); date.setDate(date.getDate() - (6 - index));
       const day = localDay(date);
@@ -531,7 +532,7 @@
     if (!healthTrends || healthTrends.generatedAt === new Date(0).toISOString()) return '';
     const date = new Date(healthTrends.generatedAt);
     if (Number.isNaN(date.getTime())) return '';
-    return new Intl.DateTimeFormat(undefined, { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' }).format(date);
+    return new Intl.DateTimeFormat(appLocale, { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' }).format(date);
   }
   async function refreshHealthTrends() {
     healthState = 'loading';
@@ -729,7 +730,6 @@
                 </button>
               {/each}
             </div>
-            {#if healthTrends?.ecg?.available}<div class="ecg-summary"><div><strong>ECG recordings</strong><span>{healthTrends.ecg.count} available in Apple Health</span></div><small>View-only · not used for today’s feeling</small></div>{/if}
             <div class="health-card-footer"><p>Recent values are compared with your 14-day baseline.</p><span>{healthUpdatedAt() ? `Updated ${healthUpdatedAt()}` : ''}</span></div>
           {:else if healthState === 'empty'}
             <div class="health-empty"><strong>Access is set up, waiting for recent readings.</strong><p>Wear your watch as usual or add a mindful session. New data will appear here when Apple Health has it.</p></div>
@@ -739,6 +739,15 @@
             <div class="health-empty"><strong>Recent health context is available in the iPhone app.</strong><p>Your check-ins and grounding history still work on this device.</p></div>
           {:else}
             <div class="health-empty"><strong>{healthState === 'ready' ? 'Connect Apple Health to add personal context.' : 'Recent data could not be loaded.'}</strong><p>Grounding only reads the signals you choose, and the app remains useful without them.</p></div>
+          {/if}
+          {#if healthState === 'connected' || healthState === 'empty'}
+            <div class="ecg-summary" class:unavailable={!healthTrends?.ecg?.available}>
+              <div>
+                <strong>ECG recordings</strong>
+                <span>{healthTrends?.ecg?.available ? `${healthTrends.ecg.count} available in Apple Health` : 'No recordings available yet'}</span>
+              </div>
+              <small>{healthTrends?.ecg?.available ? 'View-only · not used for today’s feeling' : 'Record one in the ECG app on Apple Watch'}</small>
+            </div>
           {/if}
           <div class="health-actions">
             {#if healthState === 'ready' || healthState === 'error'}
@@ -912,7 +921,7 @@
         {:else if selectedHealthMetric?.available && selectedHealthMetric.series.length}
           <div class="health-detail-summary">
             <div><span>Latest</span><strong>{healthValue(selectedHealthMetric)}</strong><small>{selectedHealthDetails.unit}</small></div>
-            <div><span>Personal baseline</span><strong>{selectedHealthMetric.baseline === null ? '—' : new Intl.NumberFormat(undefined, { maximumFractionDigits:1 }).format(selectedHealthMetric.baseline)}</strong><small>{selectedHealthDetails.unit}</small></div>
+            <div><span>Personal baseline</span><strong>{selectedHealthMetric.baseline === null ? '—' : new Intl.NumberFormat(appLocale, { maximumFractionDigits:1 }).format(selectedHealthMetric.baseline)}</strong><small>{selectedHealthDetails.unit}</small></div>
           </div>
           <div class="health-line-chart">
             <div class="chart-scale"><span>{selectedHealthChart.maximum.toFixed(0)}</span><span>{selectedHealthChart.minimum.toFixed(0)}</span></div>
@@ -926,7 +935,7 @@
             </svg>
             <div class="chart-dates"><span>{chartDay(selectedHealthMetric.series[0].day)}</span><span>{chartDay(selectedHealthMetric.series[selectedHealthMetric.series.length - 1].day)}</span></div>
           </div>
-          {#if selectedHealthPoint}<p class="health-point-value"><strong>{chartDay(selectedHealthPoint.day)}</strong><span>{new Intl.NumberFormat(undefined, { maximumFractionDigits:1 }).format(selectedHealthPoint.value)} {selectedHealthDetails.unit}</span></p>{/if}
+          {#if selectedHealthPoint}<p class="health-point-value"><strong>{chartDay(selectedHealthPoint.day)}</strong><span>{new Intl.NumberFormat(appLocale, { maximumFractionDigits:1 }).format(selectedHealthPoint.value)} {selectedHealthDetails.unit}</span></p>{/if}
           <p class="health-chart-summary">{healthChartSummary(selectedHealthMetric)} Tap a point for its value.</p>
         {:else}
           <div class="health-detail-empty">
@@ -938,7 +947,7 @@
           <div class="health-reading-list" aria-label="Recent recorded values">
             <strong>Recent readings</strong>
             {#each selectedHealthMetric.series.slice(-7).reverse() as point}
-              <div><span>{chartDay(point.day)}</span><span>{new Intl.NumberFormat(undefined, { maximumFractionDigits:1 }).format(point.value)} {selectedHealthDetails.unit}</span></div>
+              <div><span>{chartDay(point.day)}</span><span>{new Intl.NumberFormat(appLocale, { maximumFractionDigits:1 }).format(point.value)} {selectedHealthDetails.unit}</span></div>
             {/each}
           </div>
         {/if}
@@ -976,6 +985,6 @@
   .health-detail-empty strong{font-size:14px}
   .health-detail-empty p{margin:7px 0 0;font-size:11px;line-height:1.5;color:var(--muted)}
   .practice-trend{margin-top:14px}.bars i{flex:1;max-width:38px;min-height:8px}.bars i b{position:absolute;top:-17px;width:100%;text-align:center;font:9px/1 Manrope}.method-dot{flex:none}.method-dot.mindfulness{background:#ddd6ee}.method-dot.grounding{background:#cfdfc0}
-  .ecg-summary{margin-top:12px;padding:13px;border-radius:15px;background:var(--cream);display:flex;justify-content:space-between;gap:12px}.ecg-summary>div{display:flex;flex-direction:column;gap:3px}.ecg-summary strong{font-size:12px}.ecg-summary span,.ecg-summary small{font-size:9px;color:var(--muted)}
+  .ecg-summary{margin-top:12px;padding:13px;border-radius:15px;background:var(--cream);display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.ecg-summary.unavailable{background:#f5f2ec}.ecg-summary>div{display:flex;flex-direction:column;gap:3px}.ecg-summary strong{font-size:12px}.ecg-summary span,.ecg-summary small{font-size:9px;line-height:1.45;color:var(--muted)}.ecg-summary small{max-width:180px;text-align:right}
   .health-intro{margin:15px 0 0;font-size:12px;line-height:1.5;color:var(--muted)}.health-range{display:flex;gap:7px;margin-top:14px}.health-range button{min-height:44px;flex:1;border:1px solid var(--border);border-radius:14px;background:var(--surface);font-size:11px;font-weight:700;cursor:pointer}.health-range button.active{background:var(--teal);border-color:#7aa59d}.health-point-value{margin:10px 0 0;padding:10px 12px;border-radius:13px;background:var(--sun-soft);display:flex;justify-content:space-between;font-size:11px}.health-line-chart circle{cursor:pointer}.health-line-chart circle.selected{fill:#b26e54;stroke-width:4}.health-line-chart circle:focus{outline:none;stroke:#2f302d;stroke-width:4}.feeling-method>p{margin:9px 0 0;font-size:11px;line-height:1.55;color:var(--muted)}
 </style>
