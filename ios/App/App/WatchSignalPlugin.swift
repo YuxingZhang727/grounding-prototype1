@@ -102,6 +102,7 @@ private final class WatchSignalReceiver: NSObject, WCSessionDelegate {
     private(set) var latestSnapshot: [String: Any]?
     private(set) var checkIns: [[String: Any]] = []
     private var lastSnapshotPersistedAt = Date.distantPast
+    private var lastSnapshotReceiptAt = Date.distantPast
     private var loggedFirstHeartRate = false
 
     var availability: [String: Any] {
@@ -230,6 +231,12 @@ private final class WatchSignalReceiver: NSObject, WCSessionDelegate {
     private func acknowledgeSnapshot(_ snapshot: [String: Any]) {
         guard WCSession.isSupported(),
               WCSession.default.activationState == .activated else { return }
+        // A receipt only proves the phone link is alive. Sending one for every
+        // one-second snapshot doubles WCSession traffic and can delay the
+        // recovery reading. A lightweight heartbeat is enough.
+        let now = Date()
+        guard now.timeIntervalSince(lastSnapshotReceiptAt) >= 10 else { return }
+        lastSnapshotReceiptAt = now
         var receipt: [String: Any] = ["kind": "snapshotReceipt"]
         if let timestamp = snapshot["timestamp"] as? String {
             receipt["timestamp"] = timestamp

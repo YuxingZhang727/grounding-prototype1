@@ -67,6 +67,7 @@
   let groundingAnswers: string[][] = groundingSteps.map(() => []);
   let timer: ReturnType<typeof setInterval> | undefined;
   let measurementPoll: ReturnType<typeof setInterval> | undefined;
+  let measurementPollInFlight = false;
   let recoveryClock: ReturnType<typeof setInterval> | undefined;
   let watchListener: { remove: () => Promise<void> } | null = null;
   let watchSnapshot: WatchSignalSnapshot = { available:false };
@@ -176,8 +177,11 @@
       measurementMessage = 'The Watch has been asked to start. Keep your wrist relaxed while the first heart-rate reading arrives.';
       if (measurementPoll) clearInterval(measurementPoll);
       measurementPoll = setInterval(async () => {
+        if (measurementPollInFlight) return;
+        measurementPollInFlight = true;
         try { acceptMeasurement(await requestLatestWatchSignal()); } catch { /* Live listener remains primary. */ }
-      }, 1_500);
+        finally { measurementPollInFlight = false; }
+      }, 3_000);
     } catch (error) {
       measurementStage = 'unavailable';
       measurementMessage = error instanceof Error
@@ -262,6 +266,10 @@
       postSamples = [];
       lastMeasurementTimestamp = '';
       recoveryElapsed = 0;
+      // The latest live value was captured at the end of the practice, so it
+      // is also the first valid recovery reading. This removes a blank wait
+      // while the Watch produces its next telemetry snapshot.
+      acceptMeasurement(watchSnapshot);
       if (recoveryClock) clearInterval(recoveryClock);
       recoveryClock = setInterval(() => recoveryElapsed += 1, 1_000);
     }
@@ -275,7 +283,7 @@
     const allSamples = [...preSamples, ...postSamples];
     const movingSamples = allSamples.filter(sample => sample.motion >= .16).length;
     const motionRatio = allSamples.length ? movingSamples / allSamples.length : 1;
-    const confidence = preSamples.length >= 5 && postSamples.length >= 5 && recoveryElapsed >= 20 && motionRatio < .2
+    const confidence = preSamples.length >= 5 && postSamples.length >= 5 && recoveryElapsed >= 5 && motionRatio < .2
       ? 'high'
       : preSamples.length >= 3 && postSamples.length >= 3 && motionRatio < .4
         ? 'medium'
@@ -490,8 +498,8 @@
         <input id="after-feeling" type="range" min="0" max="10" step="1" bind:value={postRating} />
         <small><span>Settled</span><span>Very activated</span></small>
       </label>
-      <button class="primary" disabled={measurementStage === 'recovery' && (postSamples.length < 3 || recoveryElapsed < 20)} onclick={completeSession}>{measurementStage !== 'recovery' ? 'See comparison' : postSamples.length >= 3 && recoveryElapsed >= 20 ? 'See comparison' : 'Measuring recovery…'} <span aria-hidden="true">→</span></button>
-      {#if measurementStage === 'recovery'}<small class="reading-count" aria-live="polite">{postSamples.length} readings · {recoveryElapsed}s of 20s minimum</small><button class="text-action" onclick={completeSession}>Finish without full measurement</button>{/if}
+      <button class="primary" disabled={measurementStage === 'recovery' && postSamples.length < 3} onclick={completeSession}>{measurementStage !== 'recovery' || postSamples.length >= 3 ? 'See comparison' : 'Reading heart rate…'} <span aria-hidden="true">→</span></button>
+      {#if measurementStage === 'recovery'}<small class="reading-count" aria-live="polite" aria-atomic="true">{Math.min(postSamples.length, 3)} of 3 recovery readings</small><button class="text-action" onclick={completeSession}>Finish without measurement</button>{/if}
     </section>
 
   {:else}
