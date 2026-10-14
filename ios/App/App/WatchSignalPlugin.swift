@@ -63,10 +63,15 @@ final class WatchSignalPlugin: CAPPlugin, CAPBridgedPlugin {
         configuration.activityType = .mindAndBody
         configuration.locationType = .indoor
         HKHealthStore().startWatchApp(with: configuration) { success, error in
-            DispatchQueue.main.async {
-                if success {
-                    call.resolve(["started": true])
-                } else {
+            if success {
+                // startWatchApp wakes/opens the companion app. The explicit
+                // command also covers the case where it was already awake and
+                // guarantees that the calibration manager receives a start.
+                self.receiver.sendCommand("startMeasurement") { _ in
+                    DispatchQueue.main.async { call.resolve(["started": true]) }
+                }
+            } else {
+                DispatchQueue.main.async {
                     call.reject(error?.localizedDescription ?? "Apple Watch could not be opened.")
                 }
             }

@@ -71,7 +71,11 @@ final class HeartRateWorkoutManager: NSObject, ObservableObject {
         }
         connectivity.onMeasurementCommand = { [weak self] command in
             Task { @MainActor [weak self] in
-                if command == "stopMeasurement" { self?.stop() }
+                if command == "startMeasurement" {
+                    await self?.requestAccessAndStart()
+                } else if command == "stopMeasurement" {
+                    self?.stop()
+                }
             }
         }
         connectivity.activate()
@@ -234,7 +238,7 @@ final class HeartRateWorkoutManager: NSObject, ObservableObject {
 
     private func updateSignalState() {
         guard isRunning else { return }
-        if motionIntensity >= 0.16 {
+        if motionIntensity >= 0.12 {
             signalState = .moving
         } else if baselineBPM == nil {
             signalState = .calibrating

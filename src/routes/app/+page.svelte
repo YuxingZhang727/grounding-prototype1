@@ -237,6 +237,9 @@
     if (watchAvailability.reachable) return 'Ready';
     return 'Waiting';
   }
+  function watchLiveLabel() {
+    return watchHasReading() ? `${Math.round(watchSnapshot.bpm!)} bpm` : watchStatusLabel();
+  }
   function watchStatusDescription() {
     if (!watchAvailability.activated) return 'Connecting to your paired Apple Watch…';
     if (!watchAvailability.paired) return 'Pair an Apple Watch to receive live body signals.';
@@ -291,17 +294,33 @@
   }
   async function startWatchCalibration() {
     if (watchCalibrationState === 'starting' || watchCalibrationState === 'running') return;
+    if (watchSnapshot.isRunning) {
+      watchCalibrationState = 'running';
+      watchCalibrationMessage = calibrationProgressMessage();
+      const latest = await requestLatestWatchSignal().catch(() => ({ available:false } as WatchSignalSnapshot));
+      if (latest.kind === 'snapshot') acceptWatchSnapshot(latest);
+      return;
+    }
     watchCalibrationState = 'starting';
     watchCalibrationMessage = 'Opening a short calibration session on your Watch…';
     try {
       const started = await startWatchMeasurement();
       if (!started) throw new Error('Calibration could not start');
-      watchCalibrationState = 'running';
-      watchCalibrationMessage = 'Keep your wrist still while five readings are collected.';
+      watchCalibrationMessage = 'Watch opened. Waiting for the first reading…';
+      window.setTimeout(() => {
+        if (watchCalibrationState === 'starting') {
+          watchCalibrationState = 'error';
+          watchCalibrationMessage = 'No reading arrived. Keep Grounding open on your Watch and try again.';
+        }
+      }, 20_000);
     } catch {
       watchCalibrationState = 'error';
       watchCalibrationMessage = 'Calibration could not start. Keep your Watch unlocked and try again.';
     }
+  }
+  function calibrationProgressMessage() {
+    if ((watchSnapshot.motionIntensity ?? 0) >= 0.12) return 'Hold your wrist still — movement has paused calibration.';
+    return 'Keep your wrist still while five readings are collected.';
   }
   async function cancelWatchCalibration() {
     await stopWatchMeasurement().catch(() => false);
@@ -363,6 +382,10 @@
     const ordered = [...recentLiveHeartRates].sort((a, b) => a - b);
     const smoothedBPM = ordered.length ? ordered[Math.floor(ordered.length / 2)] : snapshot.bpm;
     analysisSnapshot = { ...watchSnapshot, bpm:smoothedBPM };
+    if ((watchCalibrationState === 'starting' || watchCalibrationState === 'running') && watchSnapshot.isRunning) {
+      watchCalibrationState = 'running';
+      watchCalibrationMessage = calibrationProgressMessage();
+    }
     if (watchCalibrationState === 'running' && typeof watchSnapshot.baselineBPM === 'number') {
       watchCalibration = { baselineBPM:watchSnapshot.baselineBPM, completedAt:new Date().toISOString() };
       localStorage.setItem(watchCalibrationKey, JSON.stringify(watchCalibration));
@@ -801,11 +824,11 @@
             <button
               class:active={watchAvailability.reachable || watchSnapshot.isRunning}
               class="watch-connection-tab"
-              aria-label={`Apple Watch settings. ${watchStatusLabel()}`}
+              aria-label={`Apple Watch settings. ${watchLiveLabel()}`}
               onclick={openWatchSettings}
             >
               <span class="watch-connection-icon" aria-hidden="true"><AppIcon name="watch" size={18}/><i></i></span>
-              <span><small>Apple Watch</small><strong>{watchStatusLabel()}</strong></span>
+              <span><small>Apple Watch</small><strong>{watchLiveLabel()}</strong></span>
             </button>
           {:else}
             <div class="avatar" aria-hidden="true"></div>
@@ -968,7 +991,7 @@
           </button>
           {#if isWatchSignalNative()}
             <button class="settings-row" onclick={toggleWatchConnection} aria-expanded={watchConnectionOpen} aria-controls="watch-connection-panel">
-              <AppIcon name="watch"/><div><strong>Apple Watch</strong><small>{watchStatusLabel()}{watchCalibration ? ` · calibrated ${sessionWhen(new Date(watchCalibration.completedAt).getTime())}` : ''}</small></div><span class="row-end">{#if watchAvailability.reachable || watchSnapshot.isRunning}<i class="status-dot" aria-hidden="true"></i>{/if}<AppIcon name="chevron"/></span>
+              <AppIcon name="watch"/><div><strong>Apple Watch</strong><small>{watchLiveLabel()}{watchCalibration ? ` · calibrated ${sessionWhen(new Date(watchCalibration.completedAt).getTime())}` : ''}</small></div><span class="row-end">{#if watchAvailability.reachable || watchSnapshot.isRunning}<i class="status-dot" aria-hidden="true"></i>{/if}<AppIcon name="chevron"/></span>
             </button>
           {/if}
         </section>
@@ -1003,6 +1026,7 @@
               <div><p class="eyebrow">Calibration session</p><h3>{watchCalibration ? `${Math.round(watchCalibration.baselineBPM)} bpm baseline` : 'Build a resting baseline'}</h3></div>
               <p>A short Watch reading gives Grounding a reference without starting an exercise first.</p>
               {#if watchCalibrationState === 'running'}
+                <div class="calibration-reading"><strong>{typeof watchSnapshot.bpm === 'number' ? Math.round(watchSnapshot.bpm) : '—'}</strong><span>bpm · live from Watch</span></div>
                 <div class="calibration-progress" aria-label={`${baselineSampleCount()} of ${baselineTarget()} calibration readings`}><i style={`width:${(baselineSampleCount() / baselineTarget()) * 100}%`}></i></div>
                 <small>{baselineSampleCount()} / {baselineTarget()} readings · keep still</small>
               {:else if watchCalibration}
@@ -1154,7 +1178,7 @@
   .health-detail-layer{position:fixed;z-index:90;inset:0;display:flex;align-items:flex-end;justify-content:center}.health-detail-scrim{position:absolute;inset:0;width:100%;height:100%;padding:0;border:0;background:rgba(42,38,34,.46);cursor:pointer}.health-detail-sheet{position:relative;width:min(100%,620px);max-height:min(88dvh,760px);padding:10px 22px calc(26px + env(safe-area-inset-bottom));border-radius:28px 28px 0 0;background:var(--surface);overflow-y:auto;box-shadow:0 -12px 40px rgba(45,40,35,.16)}.health-detail-handle{width:38px;height:4px;margin:0 auto 13px;border-radius:999px;background:#c9c1b6}.health-detail-sheet header{display:flex;align-items:flex-start;justify-content:space-between;gap:18px}.health-detail-sheet header h2{font-size:23px;line-height:1.2}.health-detail-close{width:44px;height:44px;flex:none;padding:0;border:1px solid var(--border);border-radius:50%;background:var(--surface);font-size:26px;line-height:1;cursor:pointer}.health-detail-summary{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:18px}.health-detail-summary>div{padding:14px;border-radius:17px;background:var(--cream)}.health-detail-summary span{display:block;font-size:10px;color:var(--muted)}.health-detail-summary strong{display:inline-block;margin-top:8px;font-size:25px;font-variant-numeric:tabular-nums}.health-detail-summary small{margin-left:5px;font-size:9px;color:var(--muted)}.health-line-chart{position:relative;margin-top:18px;padding:9px 8px 0 30px;border:1px solid var(--border);border-radius:18px;background:#faf7f1}.health-line-chart svg{display:block;width:100%;height:150px;overflow:visible;cursor:ew-resize;touch-action:none}.health-line-chart polyline{fill:none;stroke:#4f827b;stroke-width:3;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}.health-line-chart circle{fill:var(--sun);stroke:#fffdf9;stroke-width:3;pointer-events:none}.health-line-chart .chart-grid{fill:none;stroke:#ded6c9;stroke-width:1;pointer-events:none}.health-line-chart .chart-baseline{fill:none;stroke:#b26e54;stroke-width:1.5;stroke-dasharray:5 5;pointer-events:none}.health-line-chart .chart-selection-line{fill:none;stroke:#6b6259;stroke-width:1.25;stroke-dasharray:4 4;pointer-events:none}.health-line-chart .chart-anchor{opacity:.72}.chart-scale{position:absolute;left:7px;top:19px;bottom:30px;display:flex;flex-direction:column;justify-content:space-between;font-size:8px;color:var(--muted)}.chart-dates{display:flex;justify-content:space-between;padding:0 4px 10px;font-size:9px;color:var(--muted)}.health-chart-summary{margin:9px 2px 0;font-size:11px;line-height:1.5;color:var(--muted)}.health-source-note{margin-top:17px;padding:14px;border-radius:17px;background:var(--teal)}.health-source-note strong,.health-reading-list>strong{font-size:12px}.health-source-note p{margin:5px 0 0;font-size:11px;line-height:1.5;color:#52645f}.health-reading-list{margin-top:17px}.health-reading-list>button{width:100%;min-height:44px;padding:0;border:0;border-bottom:1px solid var(--border);background:transparent;display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:11px;cursor:pointer}.health-reading-list>button.selected{padding-inline:9px;border-radius:10px;background:var(--sun-soft)}.health-reading-list>button span:last-child{font-weight:700;font-variant-numeric:tabular-nums}
   .feeling-detail-sheet{max-height:min(90dvh,820px)}.feeling-conclusion{margin-top:18px;padding:17px;border-left:4px solid #7aa59d;border-radius:17px;background:var(--teal)}.feeling-conclusion.mild{border-left-color:var(--sun);background:var(--sun-soft)}.feeling-conclusion.elevated{border-left-color:#c46f57;background:#f7e2dc}.feeling-conclusion>span{font-size:9px;font-weight:750;text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}.feeling-conclusion p{margin:7px 0 8px;font-size:13px;line-height:1.55}.feeling-conclusion small{font-size:10px;color:var(--muted)}.feeling-method,.feeling-evidence{margin-top:22px}.feeling-method h3,.feeling-section-heading h3{margin:0;font-size:14px}.feeling-method ol{margin:12px 0 0;padding:0;list-style:none;display:grid;gap:12px}.feeling-method li{display:grid;grid-template-columns:30px 1fr;gap:11px;align-items:start}.feeling-method li>span{width:30px;height:30px;border-radius:11px;display:grid;place-items:center;background:var(--cream);font-size:11px;font-weight:750}.feeling-method strong{font-size:12px}.feeling-method p{margin:4px 0 0;font-size:11px;line-height:1.5;color:var(--muted)}.feeling-section-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}.feeling-section-heading>span{padding:6px 9px;border-radius:999px;background:var(--cream);font-size:9px;font-weight:700;color:var(--muted)}.feeling-evidence article{padding:13px 0;border-bottom:1px solid var(--border)}.feeling-evidence article.primary-evidence{margin-bottom:3px;padding:14px;border:1px solid #c8ddd5;border-radius:16px;background:var(--teal)}.feeling-evidence article>div{display:flex;align-items:center;justify-content:space-between;gap:12px}.feeling-evidence article strong{font-size:12px}.feeling-evidence article>div span{flex:none;font-size:9px;font-weight:700;color:#52645f}.feeling-evidence article>p{margin:7px 0 3px;font-size:13px;font-weight:700;font-variant-numeric:tabular-nums}.feeling-evidence article>small{display:block;font-size:10px;line-height:1.45;color:var(--muted)}.feeling-not-used{margin-top:20px;padding:15px;border-radius:16px;background:var(--cream)}.feeling-not-used strong{font-size:12px}.feeling-not-used p{margin:6px 0 0;font-size:10px;line-height:1.5;color:var(--muted)}.feeling-updated{margin:13px 2px 0;font-size:9px;color:var(--muted);text-align:center}
   .bottom-nav{position:fixed;z-index:20;left:max(24px,env(safe-area-inset-left));right:max(24px,env(safe-area-inset-right));bottom:max(16px,env(safe-area-inset-bottom));max-width:640px;margin:auto;height:72px;padding:10px 12px;display:flex;align-items:center;justify-content:space-between;border-radius:24px;background:rgba(241,231,214,.96);box-shadow:0 8px 24px rgba(45,40,35,.1);backdrop-filter:blur(16px)}.bottom-nav button{width:58px;height:52px;border:0;border-radius:18px;background:none;color:#72766f;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;cursor:pointer}.bottom-nav button.active{background:var(--sun-soft);color:#2f302d}.bottom-nav span{font-size:9px}.desktop-rail{display:none}
-  .watch-settings-panel{margin:12px 0 20px}.calibration-card{margin-top:16px;padding-top:16px;border-top:1px solid var(--border)}.calibration-card h3{margin:0;font-size:16px}.calibration-card>p:not(.eyebrow){margin:7px 0 13px;font-size:11px;line-height:1.5;color:var(--muted)}.calibration-card>small{display:block;margin:7px 0 12px;font-size:9px;color:var(--muted)}.calibration-progress{height:6px;margin-top:13px;border-radius:999px;background:var(--cream);overflow:hidden}.calibration-progress i{display:block;height:100%;border-radius:inherit;background:#4f827b;transition:width .25s ease}.calibration-message{margin:8px 0 12px!important;min-height:0!important}.calibration-message.success{color:#356c61!important}.calibration-message.error{color:#a34b3b!important}.calibration-action{min-height:44px}
+  .watch-settings-panel{margin:12px 0 20px}.calibration-card{margin-top:16px;padding-top:16px;border-top:1px solid var(--border)}.calibration-card h3{margin:0;font-size:16px}.calibration-card>p:not(.eyebrow){margin:7px 0 13px;font-size:11px;line-height:1.5;color:var(--muted)}.calibration-card>small{display:block;margin:7px 0 12px;font-size:9px;color:var(--muted)}.calibration-reading{display:flex;align-items:baseline;gap:6px;margin:4px 0 10px}.calibration-reading strong{font:30px/1 Georgia,serif}.calibration-reading span{font-size:9px;color:var(--muted)}.calibration-progress{height:6px;margin-top:13px;border-radius:999px;background:var(--cream);overflow:hidden}.calibration-progress i{display:block;height:100%;border-radius:inherit;background:#4f827b;transition:width .25s ease}.calibration-message{margin:8px 0 12px!important;min-height:0!important}.calibration-message.success{color:#356c61!important}.calibration-message.error{color:#a34b3b!important}.calibration-action{min-height:44px}
   @media(max-width:374px){.page{padding-inline:18px}.page-header h1{font-size:25px}.watch-connection-tab{padding-right:8px}.watch-connection-tab small{display:none}.focus-card{grid-template-columns:1fr 80px}.state-card{gap:10px}.method-grid{gap:12px}.method-grid button{min-height:145px}.summary-card span{font-size:9px}.bottom-nav{left:12px;right:12px}.bottom-nav button{width:52px}.artifact-grid,.journal-grid,.health-grid{grid-template-columns:1fr}.health-card-header{align-items:flex-start}.health-status{max-width:92px;text-align:center}.health-permission-card ul{grid-template-columns:1fr}.health-detail-sheet{padding-inline:18px}.health-detail-summary{grid-template-columns:1fr}}
   @media(min-width:900px){.app-shell{display:grid;grid-template-columns:230px 1fr}.desktop-rail{display:flex;height:100dvh;padding:calc(32px + env(safe-area-inset-top)) 20px calc(24px + env(safe-area-inset-bottom));flex-direction:column;gap:8px;border-right:1px solid var(--border);background:#f3ebde}.desktop-rail strong{font-size:18px;letter-spacing:.12em;margin:0 10px 30px}.desktop-rail strong span{color:#b9785f}.desktop-rail button{height:48px;border:0;border-radius:15px;background:none;display:flex;align-items:center;gap:12px;padding:0 15px;color:var(--muted)}.desktop-rail button.active{background:var(--sun-soft);color:#2f302d}.app-scroll{padding-bottom:24px}.page{width:min(100%,820px);padding:48px}.bottom-nav{display:none}.method-grid{grid-template-columns:repeat(4,1fr)}.health-grid{grid-template-columns:repeat(4,1fr)}.focus-card{grid-template-columns:1fr 220px}}
   @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;animation-duration:.01ms!important;transition-duration:.01ms!important}}
