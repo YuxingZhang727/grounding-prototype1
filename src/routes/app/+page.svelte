@@ -18,14 +18,11 @@
   import {
     getLatestWatchSignal,
     getWatchAvailability,
-    getWatchCheckIns,
     isWatchSignalNative,
     onWatchAvailabilityChanged,
-    onWatchCheckIn,
     onWatchSignal,
     requestLatestWatchSignal,
     type WatchAvailability,
-    type WatchCheckIn,
     type WatchSignalSnapshot
   } from '$lib/watch-signal';
 
@@ -56,7 +53,9 @@
     { key:'hrv', label:'Heart-rate variability', unit:'ms' },
     { key:'restingHeartRate', label:'Resting heart rate', unit:'bpm' },
     { key:'respiratoryRate', label:'Respiratory rate', unit:'breaths/min' },
-    { key:'mindfulMinutes', label:'Mindful minutes', unit:'min' }
+    { key:'mindfulMinutes', label:'Mindful minutes', unit:'min' },
+    { key:'sleepDuration', label:'Sleep duration', unit:'hr' },
+    { key:'wristTemperature', label:'Wrist temperature', unit:'°C' }
   ];
   const healthRequestedKey = 'grounding.health.requested';
   let healthState: HealthState = 'checking';
@@ -64,7 +63,17 @@
   let selectedHealthKey: TrendMetric['key'] | null = null;
   let selectedHealthMetric: TrendMetric | undefined;
   let selectedHealthDetails: (typeof healthMetricDetails)[number] | undefined;
-  let selectedHealthChart: { points:string; baselineY:number | null; minimum:number; maximum:number; lastX:number; lastY:number };
+  type ChartPoint = { day:string; value:number; x:number; y:number };
+  let selectedHealthChart: { points:string; chartPoints:ChartPoint[]; baselineY:number | null; minimum:number; maximum:number; lastX:number; lastY:number };
+  type HealthRange = 'day' | 'week' | 'month' | 'all';
+  const healthRanges: { id:HealthRange; label:string; days:number }[] = [
+    { id:'day', label:'Day', days:1 }, { id:'week', label:'Week', days:7 },
+    { id:'month', label:'Month', days:30 }, { id:'all', label:'All', days:5000 }
+  ];
+  let healthRange: HealthRange = 'month';
+  let detailHealthTrends: TrendsPayload | null = null;
+  let detailHealthLoading = false;
+  let selectedHealthPoint: ChartPoint | null = null;
   let healthPanelOpen = false;
   let healthMessage = 'Checking whether Apple Health is available…';
   let watchAvailability: WatchAvailability = { available:false, activated:false, paired:false, watchAppInstalled:false, reachable:false };
@@ -72,7 +81,6 @@
   let analysisSnapshot: WatchSignalSnapshot = { available:false };
   let recentLiveHeartRates: number[] = [];
   let lastAnalyzedTimestamp = '';
-  let watchCheckIns: WatchCheckIn[] = [];
   let arousal: ArousalEstimate;
   type MoodId = 'calm' | 'okay' | 'tense' | 'low' | 'energized';
   const moodOptions: { id:MoodId; label:string }[] = [
@@ -83,27 +91,34 @@
     { id:'energized', label:'Energized' }
   ];
   const moodStorageKey = 'grounding.today.mood';
+  const moodHistoryKey = 'grounding.mood.history.v1';
+  type MoodCheckIn = { id:string; mood:MoodId; timestamp:number };
+  type GuidedSession = { mode:'breathing'|'mindfulness'|'grounding'; completedAt:number; preRating?:number; postRating?:number };
   let selectedMood: MoodId | null = null;
+  let moodHistory: MoodCheckIn[] = [];
+  let guidedSessions: GuidedSession[] = [];
   let feelingDetailOpen = false;
   let feelingTrigger: HTMLElement | null = null;
   $: arousal = estimateArousal(analysisSnapshot, healthTrends);
   $: homeContext = buildHomeContext(healthTrends, selectedMood);
-  $: selectedHealthMetric = selectedHealthKey ? healthMetric(selectedHealthKey) : undefined;
+  $: selectedHealthMetric = selectedHealthKey ? detailHealthTrends?.[selectedHealthKey] ?? healthMetric(selectedHealthKey) : undefined;
   $: selectedHealthDetails = selectedHealthKey ? healthMetricDetails.find(item => item.key === selectedHealthKey) : undefined;
   $: selectedHealthChart = healthChart(selectedHealthMetric);
 
   function buildHomeContext(trends: TrendsPayload | null, mood: MoodId | null) {
     if (mood) {
       const copy: Record<MoodId, { label:string; summary:string; type:InterventionType }> = {
-        calm:{ label:'You’re feeling calm today', summary:'Thanks for checking in. Your own report is the clearest picture of how today feels.', type:'Creative Digital Grounding' },
-        okay:{ label:'You’re feeling okay today', summary:'A light grounding break is available if you want one, but nothing needs fixing.', type:'Creative Digital Grounding' },
-        tense:{ label:'You’re feeling tense today', summary:'Your check-in matters more than a wearable estimate. A short breathing exercise may help you settle.', type:'Breathing' },
-        low:{ label:'You’re feeling low today', summary:'A gentle, low-demand mindfulness exercise may offer a little space.', type:'Mindfulness' },
-        energized:{ label:'You’re feeling energized today', summary:'You can channel that energy into a brief sensory grounding exercise.', type:'Standard Grounding' }
+        calm:{ label:'Feeling calm', summary:'Your check-in says calm.', type:'Creative Digital Grounding' },
+        okay:{ label:'Feeling okay', summary:'Your check-in says okay.', type:'Creative Digital Grounding' },
+        tense:{ label:'Feeling tense', summary:'Your check-in says tense. A short breathing practice may help.', type:'Breathing' },
+        low:{ label:'Feeling low', summary:'Your check-in says low. Try something gentle.', type:'Mindfulness' },
+        energized:{ label:'Feeling energized', summary:'Your check-in says energized. Try a sensory practice.', type:'Standard Grounding' }
       };
       return { ...copy[mood], source:'Your check-in', level:mood === 'tense' ? 'elevated' : mood === 'low' ? 'mild' : 'settled' };
     }
-    const metrics = trends ? availableMetrics(trends) : [];
+    const metrics = trends
+      ? [trends.hrv, trends.restingHeartRate, trends.respiratoryRate].filter((metric): metric is TrendMetric => Boolean(metric?.available))
+      : [];
     const resting = trends?.restingHeartRate?.deviation;
     const hrv = trends?.hrv?.deviation;
     const respiratory = trends?.respiratoryRate?.deviation;
@@ -111,31 +126,42 @@
     const elevated = (resting ?? 0) >= .15 || (hrv ?? 0) <= -.20 || (respiratory ?? 0) >= .15;
     if (!metrics.length) return {
       label:'How does today feel?',
-      summary:'There is not enough recent Apple Health context yet. You can check in below, or simply choose an exercise.',
+      summary:'Not enough recent data yet. Check in below if you like.',
       source:'Waiting for recent context', level:'unavailable', type:'Creative Digital Grounding' as InterventionType
     };
     if (elevated) return {
       label:'Today may feel a little more activated',
-      summary:'A few recent body signals are farther from your usual pattern. Only you can say whether that matches your mood.',
+      summary:'A few signals are farther from your usual pattern.',
       source:`Recent body context · ${metrics.length} signals`, level:'elevated', type:'Breathing' as InterventionType
     };
     if (shifted) return {
       label:'Today may feel a little different',
-      summary:'Recent body signals show a small change from your usual pattern. Add a check-in below if that does—or does not—match how you feel.',
+      summary:'A few signals have shifted from your usual pattern.',
       source:`Recent body context · ${metrics.length} signals`, level:'mild', type:'Standard Grounding' as InterventionType
     };
     return {
       label:'Today may feel fairly steady',
-      summary:'Your recent body signals are close to your usual pattern. This is context, not a reading of your mood.',
+      summary:'Recent signals are close to your usual pattern.',
       source:`Recent body context · ${metrics.length} signals`, level:'settled', type:'Creative Digital Grounding' as InterventionType
     };
   }
 
   function selectMood(mood: MoodId) {
     selectedMood = mood;
-    localStorage.setItem(moodStorageKey, JSON.stringify({ mood, day:new Date().toISOString().slice(0, 10) }));
+    const timestamp = Date.now();
+    const day = localDay(timestamp);
+    localStorage.setItem(moodStorageKey, JSON.stringify({ mood, day }));
+    moodHistory = [{ id:crypto.randomUUID(), mood, timestamp }, ...moodHistory.filter(item => localDay(item.timestamp) !== day)].slice(0, 120);
+    localStorage.setItem(moodHistoryKey, JSON.stringify(moodHistory));
     navigator.vibrate?.(10);
   }
+
+  function localDay(value: number | Date) {
+    const date = value instanceof Date ? value : new Date(value);
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  }
+  function todayLabel() { return new Intl.DateTimeFormat(undefined, { weekday:'long', month:'long', day:'numeric' }).format(new Date()); }
+  function greeting() { const hour = new Date().getHours(); return hour < 12 ? 'Good morning.' : hour < 18 ? 'Good afternoon.' : 'Good evening.'; }
 
   function openFeelingDetails(event: MouseEvent) {
     feelingTrigger = event.currentTarget as HTMLElement;
@@ -150,12 +176,12 @@
 
   function feelingMetricRole(metric: TrendMetric) {
     if (selectedMood) return 'Context only';
-    return metric.key === 'mindfulMinutes' ? 'Context only' : 'Used in conclusion';
+    return ['mindfulMinutes','sleepDuration','wristTemperature'].includes(metric.key) ? 'Context only' : 'Used in conclusion';
   }
 
   function feelingMetricReason(metric: TrendMetric) {
-    if (metric.key === 'mindfulMinutes') {
-      return 'Shown as wellbeing context, but it does not change today’s feeling conclusion.';
+    if (['mindfulMinutes','sleepDuration','wristTemperature'].includes(metric.key)) {
+      return 'Shown for context; it does not change today’s conclusion.';
     }
     if (metric.deviation === null) return 'A personal baseline is still being built, so this signal cannot change the conclusion yet.';
     if (selectedMood) return `${describeDeviation(metric)} Your check-in takes priority, so this signal does not override it.`;
@@ -399,16 +425,23 @@
   function healthMetric(key: TrendMetric['key']) { return healthTrends?.[key]; }
   function openHealthMetric(key: TrendMetric['key']) {
     selectedHealthKey = key;
+    healthRange = 'month';
+    detailHealthTrends = healthTrends;
+    selectedHealthPoint = null;
     setTimeout(() => document.querySelector<HTMLElement>('#health-detail-heading')?.focus(), 0);
   }
   function closeHealthMetric() {
     const key = selectedHealthKey;
     selectedHealthKey = null;
+    detailHealthTrends = null;
+    selectedHealthPoint = null;
     if (key) setTimeout(() => document.querySelector<HTMLElement>(`[data-health-key="${key}"]`)?.focus(), 0);
   }
   function healthChart(metric: TrendMetric | undefined) {
-    const series = metric?.series ?? [];
-    if (!series.length) return { points:'', baselineY:null as number | null, minimum:0, maximum:0, lastX:0, lastY:0 };
+    const rawSeries = metric?.series ?? [];
+    const step = Math.max(1, Math.ceil(rawSeries.length / 365));
+    const series = step === 1 ? rawSeries : rawSeries.filter((_, index) => index % step === 0 || index === rawSeries.length - 1);
+    if (!series.length) return { points:'', chartPoints:[] as ChartPoint[], baselineY:null as number | null, minimum:0, maximum:0, lastX:0, lastY:0 };
     const values = series.map(point => point.value);
     if (typeof metric?.baseline === 'number') values.push(metric.baseline);
     let minimum = Math.min(...values);
@@ -419,8 +452,10 @@
     const range = Math.max(maximum - minimum, 1);
     const x = (index: number) => 14 + (series.length === 1 ? 136 : index * 272 / (series.length - 1));
     const y = (value: number) => 12 + (maximum - value) * 104 / range;
+    const chartPoints = series.map((point, index) => ({ ...point, x:x(index), y:y(point.value) }));
     return {
-      points: series.map((point, index) => `${x(index).toFixed(1)},${y(point.value).toFixed(1)}`).join(' '),
+      points: chartPoints.map(point => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(' '),
+      chartPoints,
       baselineY: typeof metric?.baseline === 'number' ? y(metric.baseline) : null,
       minimum,
       maximum,
@@ -429,10 +464,19 @@
     };
   }
   function healthMetricExplanation(key: TrendMetric['key']) {
-    if (key === 'hrv') return 'Daily HRV averages recorded by Apple Health. The dashed line is your recent personal median; day-to-day variation is common.';
-    if (key === 'restingHeartRate') return 'Daily resting heart-rate values recorded by Apple Health, compared with your recent personal median.';
-    if (key === 'respiratoryRate') return 'Daily respiratory-rate averages available in Apple Health, often recorded while resting or sleeping.';
-    return 'Total duration of mindful sessions recorded in Apple Health for each day.';
+    if (key === 'hrv') return 'HRV is the variation in time between heartbeats. Your own pattern matters more than a single value.';
+    if (key === 'restingHeartRate') return 'Resting heart rate is your heart rate during quiet, inactive periods.';
+    if (key === 'respiratoryRate') return 'Respiratory rate is the number of breaths per minute, often measured during sleep.';
+    if (key === 'mindfulMinutes') return 'Time logged as mindful sessions in Apple Health.';
+    if (key === 'sleepDuration') return 'Estimated time asleep, grouped by wake-up day.';
+    return 'Nightly wrist temperature relative to the watch sensor. It can shift for many everyday reasons.';
+  }
+  async function selectHealthRange(range: HealthRange) {
+    healthRange = range;
+    selectedHealthPoint = null;
+    detailHealthLoading = true;
+    detailHealthTrends = await getHealthTrends(healthRanges.find(item => item.id === range)?.days ?? 30);
+    detailHealthLoading = false;
   }
   function chartDay(day: string) {
     return new Intl.DateTimeFormat(undefined, { month:'short', day:'numeric' }).format(new Date(`${day}T12:00:00`));
@@ -463,6 +507,25 @@
   function healthDescription(key: TrendMetric['key']) {
     const metric = healthMetric(key);
     return metric?.available ? describeDeviation(metric) : 'No recent reading yet.';
+  }
+  function practiceSessions() {
+    const digital = journals.map(journal => ({ mode:'digital' as const, completedAt:journal.created }));
+    return [...guidedSessions, ...digital].sort((a, b) => b.completedAt - a.completedAt);
+  }
+  function sessionName(mode: GuidedSession['mode'] | 'digital') {
+    return mode === 'digital' ? 'Digital Grounding' : mode === 'grounding' ? '5–4–3–2–1 Grounding' : mode[0].toUpperCase() + mode.slice(1);
+  }
+  function sessionWhen(timestamp: number) {
+    const today = localDay(new Date());
+    return `${localDay(timestamp) === today ? 'Today' : new Intl.DateTimeFormat(undefined, { month:'short', day:'numeric' }).format(timestamp)} · ${new Intl.DateTimeFormat(undefined, { hour:'numeric', minute:'2-digit' }).format(timestamp)}`;
+  }
+  function weeklySessionCounts() {
+    const formatter = new Intl.DateTimeFormat(undefined, { weekday:'narrow' });
+    return Array.from({ length:7 }, (_, index) => {
+      const date = new Date(); date.setHours(0,0,0,0); date.setDate(date.getDate() - (6 - index));
+      const day = localDay(date);
+      return { label:formatter.format(date), count:practiceSessions().filter(item => localDay(item.completedAt) === day).length };
+    });
   }
   function healthUpdatedAt() {
     if (!healthTrends || healthTrends.generatedAt === new Date(0).toISOString()) return '';
@@ -533,7 +596,9 @@
   onMount(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(moodStorageKey) ?? 'null');
-      if (saved?.day === new Date().toISOString().slice(0, 10) && moodOptions.some(option => option.id === saved.mood)) selectedMood = saved.mood;
+      if (saved?.day === localDay(new Date()) && moodOptions.some(option => option.id === saved.mood)) selectedMood = saved.mood;
+      moodHistory = JSON.parse(localStorage.getItem(moodHistoryKey) || '[]');
+      guidedSessions = JSON.parse(localStorage.getItem('grounding.guidedSessions') || '[]');
     } catch { /* Ignore an invalid local check-in. */ }
     selectTab(readTab(), true);
     loadJournals().then(value => journals = value).catch(() => {});
@@ -560,10 +625,6 @@
               reachable:true
             };
           }),
-          onWatchCheckIn(entry => {
-            watchCheckIns = [entry, ...watchCheckIns.filter(item => item.id !== entry.id)].slice(0, 100);
-            watchAvailability = { ...watchAvailability, available:true, activated:true, paired:true, watchAppInstalled:true };
-          }),
           onWatchAvailabilityChanged(availability => watchAvailability = availability)
         ]);
         if (watchListenersDisposed) {
@@ -571,11 +632,10 @@
         } else {
           handles.forEach(handle => { if (handle) watchListenerHandles.push(handle); });
         }
-        const [availability, latestSnapshot, checkIns] = await Promise.all([
-          getWatchAvailability(), getLatestWatchSignal(), getWatchCheckIns()
+        const [availability, latestSnapshot] = await Promise.all([
+          getWatchAvailability(), getLatestWatchSignal()
         ]);
         watchAvailability = availability;
-        watchCheckIns = checkIns;
         acceptWatchSnapshot(latestSnapshot);
         if (watchSnapshot.kind === 'snapshot') {
           watchAvailability = { ...watchAvailability, paired:true, watchAppInstalled:true };
@@ -616,7 +676,7 @@
   <main class="app-scroll" tabindex="-1">
     <div class="page" class:exercises-page={tab === 'exercises'}>
       {#if tab === 'home'}
-        <header class="page-header"><div><p class="eyebrow">Saturday, September 19</p><h1>Good afternoon.</h1></div><div class="avatar" aria-hidden="true"></div></header>
+        <header class="page-header"><div><p class="eyebrow">{todayLabel()}</p><h1>{greeting()}</h1></div><div class="avatar" aria-hidden="true"></div></header>
         <section class:unavailable={homeContext.level === 'unavailable'} class:mild={homeContext.level === 'mild'} class:elevated={homeContext.level === 'elevated'} class="state-card" aria-labelledby="today-heading">
           <button class="state-card-trigger" aria-haspopup="dialog" aria-expanded={feelingDetailOpen} onclick={openFeelingDetails}>
             <p class="eyebrow">Today · {homeContext.source}</p>
@@ -632,7 +692,7 @@
           {/if}
         </section>
         <section class="mood-checkin" aria-labelledby="mood-checkin-heading">
-          <div><p class="eyebrow">Optional check-in</p><h2 id="mood-checkin-heading">How are you feeling?</h2><p>Your answer takes priority over the wearable estimate.</p></div>
+          <div><p class="eyebrow">Check in</p><h2 id="mood-checkin-heading">How are you feeling?</h2><p>Your answer comes first.</p></div>
           <div class="mood-options" role="group" aria-label="How are you feeling today?">
             {#each moodOptions as mood}
               <button class:active={selectedMood === mood.id} aria-pressed={selectedMood === mood.id} onclick={() => selectMood(mood.id)}>{mood.label}</button>
@@ -644,36 +704,18 @@
           <div class="focus-copy">
             <p class="eyebrow">Suggested for today</p>
             <h2>{homeContext.type}</h2>
-            <p>This suggestion uses {selectedMood ? 'your check-in first, with recent body context as support' : 'recent HealthKit patterns as optional context'}.</p>
-            <div class="policy-meta"><span>Optional</span><span>No diagnosis</span></div>
-            <button class="primary" onclick={() => startRecommendedIntervention(homeContext.type)}>Try this intervention</button>
+            <p>{selectedMood ? 'Based on your check-in.' : 'Based on your recent patterns.'}</p>
+            <button class="primary" onclick={() => startRecommendedIntervention(homeContext.type)}>Start</button>
           </div>
           <div class="paper-motif" aria-hidden="true"><i></i><i></i><b></b></div>
         </section>
         {#if notice}<p class="notice" role="status">{notice}</p>{/if}
-        <div class="section-title"><h2>Later today</h2><button>See plan</button></div>
-        <section class="task-list"><article><AppIcon name="calendar"/><div><strong>Project reading</strong><span>3:30 PM · 25 minutes</span></div><span>Next</span></article><article><AppIcon name="heart"/><div><strong>Check in again</strong><span>After your next task</span></div><span>Later</span></article></section>
       {:else if tab === 'history'}
         <header class="page-header"><div><p class="eyebrow">Your patterns</p><h1>History</h1></div></header>
-        <section class="summary-card"><div><strong>4</strong><span>grounding sessions</span></div><div><strong>12m</strong><span>time spent noticing</span></div><div><strong>{rolls.length}</strong><span>sound tapes kept</span></div></section>
-        {#if isWatchSignalNative()}
-          <section class="watch-checkins" aria-labelledby="watch-checkins-heading">
-            <div class="section-title"><div><p class="eyebrow">From Apple Watch</p><h2 id="watch-checkins-heading">Momentary anxiety check-ins</h2></div><span>{watchCheckIns.length}</span></div>
-            {#if watchCheckIns.length}
-              <div class="watch-checkin-list">
-                {#each watchCheckIns.slice(0, 5) as entry}
-                  <article><strong>{entry.rating}</strong><div><span>{checkInTime(entry.timestamp)}</span><small>{entry.bpm ? `${Math.round(entry.bpm)} BPM at check-in` : 'No heart-rate sample'} · self-reported 0–10</small></div></article>
-                {/each}
-              </div>
-            {:else}
-              <p class="collection-empty">Check-ins recorded on your watch will appear here automatically.</p>
-            {/if}
-          </section>
-        {/if}
-        <section class="trend-card"><div class="section-title"><h2>This week</h2><span>Gentler by Friday</span></div><div class="bars" aria-label="Tension trend: Monday 4, Tuesday 3, Wednesday 4, Thursday 2, Friday 2">{#each [4,3,4,2,2] as value,index}<i style={`height:${22+value*14}px`}><span>{['M','T','W','T','F'][index]}</span></i>{/each}</div><p>Your check-ins eased after short creative exercises. This is a personal pattern, not a diagnosis.</p></section>
+        <section class="summary-card"><div><strong>{practiceSessions().length}</strong><span>practices</span></div><div><strong>{practiceSessions().filter(item => Date.now() - item.completedAt < 7 * 86400000).length}</strong><span>this week</span></div><div><strong>{journals.length}</strong><span>journal pages</span></div></section>
         <section class="health-card" aria-labelledby="recent-health-heading">
           <div class="health-card-header">
-            <div class="health-title"><span class="health-icon" aria-hidden="true"><AppIcon name="heart"/></span><div><p class="eyebrow">Apple Health · Last 30 days</p><h2 id="recent-health-heading">Recent health context</h2></div></div>
+            <div class="health-title"><span class="health-icon" aria-hidden="true"><AppIcon name="heart"/></span><div><p class="eyebrow">Apple Health</p><h2 id="recent-health-heading">Health context</h2></div></div>
             <span class="health-status" class:active={healthState === 'connected'}>{healthStatusLabel()}</span>
           </div>
           {#if healthState === 'connected'}
@@ -687,7 +729,8 @@
                 </button>
               {/each}
             </div>
-            <div class="health-card-footer"><p>Compared with your own 14-day baseline. This is supporting context, not a diagnosis.</p><span>{healthUpdatedAt() ? `Updated ${healthUpdatedAt()}` : ''}</span></div>
+            {#if healthTrends?.ecg?.available}<div class="ecg-summary"><div><strong>ECG recordings</strong><span>{healthTrends.ecg.count} available in Apple Health</span></div><small>View-only · not used for today’s feeling</small></div>{/if}
+            <div class="health-card-footer"><p>Recent values are compared with your 14-day baseline.</p><span>{healthUpdatedAt() ? `Updated ${healthUpdatedAt()}` : ''}</span></div>
           {:else if healthState === 'empty'}
             <div class="health-empty"><strong>Access is set up, waiting for recent readings.</strong><p>Wear your watch as usual or add a mindful session. New data will appear here when Apple Health has it.</p></div>
           {:else if healthState === 'checking' || healthState === 'loading' || healthState === 'connecting'}
@@ -706,7 +749,13 @@
           </div>
           <p class="sr-status" aria-live="polite">{healthMessage}</p>
         </section>
-        <h2 class="list-heading">Recent sessions</h2><section class="session-list"><article><span class="method-dot digital"></span><div><strong>Digital Grounding</strong><small>Today · Touch, sight, and sound</small></div><AppIcon name="chevron"/></article><article><span class="method-dot breathing"></span><div><strong>Breathing</strong><small>Thursday · 3 minutes</small></div><AppIcon name="chevron"/></article></section>
+        <section class="trend-card practice-trend"><div class="section-title"><h2>Practice activity</h2><span>Last 7 days</span></div><div class="bars" aria-label="Practice sessions during the last seven days">{#each weeklySessionCounts() as day}<i style={`height:${Math.max(8, day.count * 24)}px`}><b>{day.count || ''}</b><span>{day.label}</span></i>{/each}</div><p>{practiceSessions().length ? `${practiceSessions().length} completed practice${practiceSessions().length === 1 ? '' : 's'} saved on this device.` : 'Completed practices will appear here.'}</p></section>
+        <h2 class="list-heading">Recent practices</h2>
+        {#if practiceSessions().length}<section class="session-list">{#each practiceSessions().slice(0, 8) as session}<article><span class={`method-dot ${session.mode}`}></span><div><strong>{sessionName(session.mode)}</strong><small>{sessionWhen(session.completedAt)}</small></div></article>{/each}</section>{:else}<p class="collection-empty">No completed practices yet.</p>{/if}
+        <section class="watch-checkins" aria-labelledby="phone-checkins-heading">
+          <div class="section-title"><div><p class="eyebrow">From your check-ins</p><h2 id="phone-checkins-heading">Feeling records</h2></div><span>{moodHistory.length}</span></div>
+          {#if moodHistory.length}<div class="watch-checkin-list">{#each moodHistory.slice(0, 7) as entry}<article><strong>{moodOptions.find(item => item.id === entry.mood)?.label?.slice(0, 1)}</strong><div><span>{moodOptions.find(item => item.id === entry.mood)?.label}</span><small>{sessionWhen(entry.timestamp)}</small></div></article>{/each}</div>{:else}<p class="collection-empty">Your phone check-ins will appear here.</p>{/if}
+        </section>
       {:else if tab === 'exercises'}
         <header class="page-header"><h1>Exercises</h1><div class="avatar" aria-hidden="true"></div></header>
         <button class="featured" onclick={startDigital}><div><p class="eyebrow">For you</p><h2>Digital Grounding</h2><span>3 min · visual + touch + sound</span></div><div class="digital-lines" aria-hidden="true"><i></i><i></i><i></i></div></button>
@@ -783,7 +832,7 @@
             <div class="permission-heading"><div><p class="eyebrow">Optional context</p><h2 id="health-permission-heading" tabindex="-1">Connect Apple Health</h2></div><button class="text-button" onclick={() => healthPanelOpen = false}>Close</button></div>
             <p>With your permission, Grounding can compare a few recent signals with your own baseline and make exercise suggestions feel more relevant.</p>
             <ul>
-              <li>Heart-rate variability</li><li>Resting heart rate</li><li>Respiratory rate</li><li>Mindful minutes</li>
+              <li>Heart-rate variability</li><li>Resting heart rate</li><li>Respiratory rate</li><li>Sleep duration</li><li>Wrist temperature</li><li>Mindful minutes</li><li>Existing ECG records</li>
             </ul>
             <div class="privacy-note"><AppIcon name="heart"/><p><strong>Your choice stays yours.</strong><span>Only summarized trends enter the app. Grounding does not diagnose you, and you can change access later in the Health app.</span></p></div>
             <p class="permission-status" aria-live="polite">{healthMessage}</p>
@@ -817,12 +866,8 @@
         </div>
 
         <section class="feeling-method" aria-labelledby="feeling-method-heading">
-          <h3 id="feeling-method-heading">How this was decided</h3>
-          <ol>
-            <li><span>1</span><div><strong>Choose the primary source</strong><p>{selectedMood ? 'Your own check-in is used first. Wearable data cannot override how you say you feel.' : 'No check-in was selected, so the app uses available recent Apple Health trends as optional context.'}</p></div></li>
-            <li><span>2</span><div><strong>Compare with your own pattern</strong><p>Each usable Health metric is compared with its recent personal median—not with another person or a population average.</p></div></li>
-            <li><span>3</span><div><strong>Apply conservative thresholds</strong><p>A small change needs resting heart rate or respiratory rate to be at least 8% higher, or HRV at least 10% lower. Larger changes use 15% and 20% thresholds.</p></div></li>
-          </ol>
+          <h3 id="feeling-method-heading">How it works</h3>
+          <p>{selectedMood ? 'Your check-in sets the result. Health data stays in the background.' : 'Recent HRV, resting heart rate, and breathing rate are compared with your own 14-day baseline. Sleep, wrist temperature, and mindful minutes are shown only as context.'}</p>
         </section>
 
         <section class="feeling-evidence" aria-labelledby="feeling-evidence-heading">
@@ -831,7 +876,7 @@
             <article class="primary-evidence">
               <div><strong>Your check-in</strong><span>Primary source</span></div>
               <p>{moodOptions.find(option => option.id === selectedMood)?.label}</p>
-              <small>You selected this today. It directly determines the wording of the conclusion above.</small>
+              <small>Selected today.</small>
             </article>
           {/if}
           {#if healthTrends && availableMetrics(healthTrends).length}
@@ -843,14 +888,10 @@
               </article>
             {/each}
           {:else if !selectedMood}
-            <div class="health-detail-empty"><strong>No usable body context yet</strong><p>Apple Health has not returned enough recent data, so the app is asking you how today feels instead of drawing a conclusion.</p></div>
+            <div class="health-detail-empty"><strong>No usable body context yet</strong><p>Add a check-in or try again after Apple Health has more data.</p></div>
           {/if}
         </section>
 
-        <div class="feeling-not-used">
-          <strong>What this conclusion does not claim</strong>
-          <p>It estimates context, not emotion or a medical condition. Live Apple Watch heart rate and movement feed the separate real-time physiological estimate; they are not currently used to rewrite this Today’s feeling card.</p>
-        </div>
         {#if healthUpdatedAt()}<p class="feeling-updated">Health context refreshed {healthUpdatedAt()}</p>{/if}
       </div>
     </div>
@@ -861,10 +902,14 @@
       <div class="health-detail-sheet" role="dialog" aria-modal="true" aria-labelledby="health-detail-heading">
         <div class="health-detail-handle" aria-hidden="true"></div>
         <header>
-          <div><p class="eyebrow">Apple Health · Last 30 days</p><h2 id="health-detail-heading" tabindex="-1">{selectedHealthDetails.label}</h2></div>
+          <div><p class="eyebrow">Apple Health</p><h2 id="health-detail-heading" tabindex="-1">{selectedHealthDetails.label}</h2></div>
           <button class="health-detail-close" onclick={closeHealthMetric} aria-label="Close health history"><span aria-hidden="true">×</span></button>
         </header>
-        {#if selectedHealthMetric?.available && selectedHealthMetric.series.length}
+        <p class="health-intro">{healthMetricExplanation(selectedHealthKey)}</p>
+        <div class="health-range" aria-label="History range">{#each healthRanges as range}<button class:active={healthRange === range.id} aria-pressed={healthRange === range.id} onclick={() => selectHealthRange(range.id)}>{range.label}</button>{/each}</div>
+        {#if detailHealthLoading}
+          <div class="health-detail-empty"><strong>Loading history…</strong></div>
+        {:else if selectedHealthMetric?.available && selectedHealthMetric.series.length}
           <div class="health-detail-summary">
             <div><span>Latest</span><strong>{healthValue(selectedHealthMetric)}</strong><small>{selectedHealthDetails.unit}</small></div>
             <div><span>Personal baseline</span><strong>{selectedHealthMetric.baseline === null ? '—' : new Intl.NumberFormat(undefined, { maximumFractionDigits:1 }).format(selectedHealthMetric.baseline)}</strong><small>{selectedHealthDetails.unit}</small></div>
@@ -875,18 +920,20 @@
               <path class="chart-grid" d="M14 12H286M14 64H286M14 116H286"/>
               {#if selectedHealthChart.baselineY !== null}<path class="chart-baseline" d={`M14 ${selectedHealthChart.baselineY}H286`}/>{/if}
               <polyline points={selectedHealthChart.points}/>
-              <circle cx={selectedHealthChart.lastX} cy={selectedHealthChart.lastY} r="4"/>
+              {#each selectedHealthChart.chartPoints as point}
+                <circle class:selected={selectedHealthPoint?.day === point.day} cx={point.x} cy={point.y} r={selectedHealthPoint?.day === point.day ? 6 : 4} role="button" tabindex="0" aria-label={`${chartDay(point.day)}: ${point.value} ${selectedHealthDetails.unit}`} onclick={() => selectedHealthPoint = point} onkeydown={(event) => { if (event.key === 'Enter' || event.key === ' ') selectedHealthPoint = point; }}/>
+              {/each}
             </svg>
             <div class="chart-dates"><span>{chartDay(selectedHealthMetric.series[0].day)}</span><span>{chartDay(selectedHealthMetric.series[selectedHealthMetric.series.length - 1].day)}</span></div>
           </div>
-          <p class="health-chart-summary">{healthChartSummary(selectedHealthMetric)}</p>
+          {#if selectedHealthPoint}<p class="health-point-value"><strong>{chartDay(selectedHealthPoint.day)}</strong><span>{new Intl.NumberFormat(undefined, { maximumFractionDigits:1 }).format(selectedHealthPoint.value)} {selectedHealthDetails.unit}</span></p>{/if}
+          <p class="health-chart-summary">{healthChartSummary(selectedHealthMetric)} Tap a point for its value.</p>
         {:else}
           <div class="health-detail-empty">
             <strong>No recorded history yet</strong>
-            <p>Apple Health did not return a reading for this metric in the last 30 days. You can still see where the data will come from below.</p>
+            <p>Apple Health did not return a reading for this range.</p>
           </div>
         {/if}
-        <div class="health-source-note"><strong>Where this comes from</strong><p>{healthMetricExplanation(selectedHealthKey)}</p></div>
         {#if selectedHealthMetric?.series.length}
           <div class="health-reading-list" aria-label="Recent recorded values">
             <strong>Recent readings</strong>
@@ -928,4 +975,7 @@
   .health-detail-empty{margin-top:18px;padding:20px;border-radius:18px;background:var(--cream)}
   .health-detail-empty strong{font-size:14px}
   .health-detail-empty p{margin:7px 0 0;font-size:11px;line-height:1.5;color:var(--muted)}
+  .practice-trend{margin-top:14px}.bars i{flex:1;max-width:38px;min-height:8px}.bars i b{position:absolute;top:-17px;width:100%;text-align:center;font:9px/1 Manrope}.method-dot{flex:none}.method-dot.mindfulness{background:#ddd6ee}.method-dot.grounding{background:#cfdfc0}
+  .ecg-summary{margin-top:12px;padding:13px;border-radius:15px;background:var(--cream);display:flex;justify-content:space-between;gap:12px}.ecg-summary>div{display:flex;flex-direction:column;gap:3px}.ecg-summary strong{font-size:12px}.ecg-summary span,.ecg-summary small{font-size:9px;color:var(--muted)}
+  .health-intro{margin:15px 0 0;font-size:12px;line-height:1.5;color:var(--muted)}.health-range{display:flex;gap:7px;margin-top:14px}.health-range button{min-height:44px;flex:1;border:1px solid var(--border);border-radius:14px;background:var(--surface);font-size:11px;font-weight:700;cursor:pointer}.health-range button.active{background:var(--teal);border-color:#7aa59d}.health-point-value{margin:10px 0 0;padding:10px 12px;border-radius:13px;background:var(--sun-soft);display:flex;justify-content:space-between;font-size:11px}.health-line-chart circle{cursor:pointer}.health-line-chart circle.selected{fill:#b26e54;stroke-width:4}.health-line-chart circle:focus{outline:none;stroke:#2f302d;stroke-width:4}.feeling-method>p{margin:9px 0 0;font-size:11px;line-height:1.55;color:var(--muted)}
 </style>

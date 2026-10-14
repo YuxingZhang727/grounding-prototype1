@@ -18,7 +18,7 @@ export type TrendPoint = {
 };
 
 export type TrendMetric = {
-  key: 'hrv' | 'restingHeartRate' | 'respiratoryRate' | 'mindfulMinutes';
+  key: 'hrv' | 'restingHeartRate' | 'respiratoryRate' | 'mindfulMinutes' | 'sleepDuration' | 'wristTemperature';
   /** False when the metric has no samples at all, or is not authorized. */
   available: boolean;
   /** Most recent daily value, or null. */
@@ -43,6 +43,13 @@ export type TrendsPayload = {
   restingHeartRate?: TrendMetric;
   respiratoryRate?: TrendMetric;
   mindfulMinutes?: TrendMetric;
+  sleepDuration?: TrendMetric;
+  wristTemperature?: TrendMetric;
+  ecg?: {
+    available: boolean;
+    count: number;
+    latestAt?: string;
+  };
   generatedAt: string;
   trendDays: number;
   baselineDays: number;
@@ -61,7 +68,9 @@ export const HEALTH_TREND_METRICS: TrendMetric['key'][] = [
   'hrv',
   'restingHeartRate',
   'respiratoryRate',
-  'mindfulMinutes'
+  'mindfulMinutes',
+  'sleepDuration',
+  'wristTemperature'
 ];
 
 const nativeHealthTrend = registerPlugin<NativeHealthTrend>('HealthTrend');

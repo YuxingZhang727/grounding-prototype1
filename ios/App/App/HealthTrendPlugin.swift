@@ -39,6 +39,11 @@ class HealthTrendPlugin: CAPPlugin, CAPBridgedPlugin {
         types.insert(HKQuantityType.quantityType(forIdentifier: .restingHeartRate)!)
         types.insert(HKQuantityType.quantityType(forIdentifier: .respiratoryRate)!)
         types.insert(HKCategoryType.categoryType(forIdentifier: .mindfulSession)!)
+        types.insert(HKCategoryType.categoryType(forIdentifier: .sleepAnalysis)!)
+        types.insert(HKObjectType.electrocardiogramType())
+        if #available(iOS 16.0, *), let wristTemperature = HKQuantityType.quantityType(forIdentifier: .appleSleepingWristTemperature) {
+            types.insert(wristTemperature)
+        }
         return types
     }
 
@@ -154,6 +159,27 @@ class HealthTrendPlugin: CAPPlugin, CAPBridgedPlugin {
             group.leave()
         }
 
+        group.enter()
+        sleepHoursPerDay(start: start, end: end) { result in
+            switch result {
+            case .success(let series):
+                record("sleepDuration", self.summarizeSeries(key: "sleepDuration", unit: "hr", series: series))
+            case .failure(let error):
+                lock.lock(); if failure == nil { failure = error }; lock.unlock()
+            }
+            group.leave()
+        }
+
+        group.enter()
+        electrocardiogramSummary(start: start, end: end) { result in
+            switch result {
+            case .success(let summary): record("ecg", summary)
+            case .failure(let error):
+                lock.lock(); if failure == nil { failure = error }; lock.unlock()
+            }
+            group.leave()
+        }
+
         group.notify(queue: .main) {
             if let failure, payload.isEmpty {
                 call.reject(failure.localizedDescription, "HEALTH_QUERY_FAILED", failure)
@@ -174,20 +200,25 @@ class HealthTrendPlugin: CAPPlugin, CAPBridgedPlugin {
         case hrv = "HKQuantityTypeIdentifierHeartRateVariabilitySDNN"
         case restingHeartRate = "HKQuantityTypeIdentifierRestingHeartRate"
         case respiratoryRate = "HKQuantityTypeIdentifierRespiratoryRate"
+        case wristTemperature = "HKQuantityTypeIdentifierAppleSleepingWristTemperature"
 
         var key: String {
             switch self {
             case .hrv: return "hrv"
             case .restingHeartRate: return "restingHeartRate"
             case .respiratoryRate: return "respiratoryRate"
+            case .wristTemperature: return "wristTemperature"
             }
         }
 
-        var identifier: HKQuantityTypeIdentifier {
+        var identifier: HKQuantityTypeIdentifier? {
             switch self {
             case .hrv: return .heartRateVariabilitySDNN
             case .restingHeartRate: return .restingHeartRate
             case .respiratoryRate: return .respiratoryRate
+            case .wristTemperature:
+                if #available(iOS 16.0, *) { return .appleSleepingWristTemperature }
+                return nil
             }
         }
 
@@ -196,6 +227,7 @@ class HealthTrendPlugin: CAPPlugin, CAPBridgedPlugin {
             case .hrv: return HKUnit.secondUnit(with: .milli)
             case .restingHeartRate, .respiratoryRate:
                 return HKUnit.count().unitDivided(by: .minute())
+            case .wristTemperature: return .degreeCelsius()
             }
         }
     }
@@ -218,7 +250,8 @@ class HealthTrendPlugin: CAPPlugin, CAPBridgedPlugin {
         end: Date,
         completion: @escaping (Result<[DayValue], Error>) -> Void
     ) {
-        guard let quantityType = HKQuantityType.quantityType(forIdentifier: metric.identifier) else {
+        guard let identifier = metric.identifier,
+              let quantityType = HKQuantityType.quantityType(forIdentifier: identifier) else {
             completion(.success([]))
             return
         }
@@ -300,6 +333,59 @@ class HealthTrendPlugin: CAPPlugin, CAPBridgedPlugin {
         healthStore.execute(query)
     }
 
+    private func sleepHoursPerDay(
+        start: Date,
+        end: Date,
+        completion: @escaping (Result<[DayValue], Error>) -> Void
+    ) {
+        guard let type = HKCategoryType.categoryType(forIdentifier: .sleepAnalysis) else {
+            completion(.success([])); return
+        }
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: [])
+        let query = HKSampleQuery(sampleType: type, predicate: predicate, limit: HKObjectQueryNoLimit,
+                                  sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)]) { _, samples, error in
+            if let error { completion(.failure(error)); return }
+            var byDay: [String: Double] = [:]
+            for case let sample as HKCategorySample in samples ?? [] {
+                let asleep: Bool
+                if #available(iOS 16.0, *) {
+                    asleep = [HKCategoryValueSleepAnalysis.asleepCore.rawValue,
+                              HKCategoryValueSleepAnalysis.asleepDeep.rawValue,
+                              HKCategoryValueSleepAnalysis.asleepREM.rawValue,
+                              HKCategoryValueSleepAnalysis.asleepUnspecified.rawValue].contains(sample.value)
+                } else {
+                    asleep = sample.value == HKCategoryValueSleepAnalysis.asleep.rawValue
+                }
+                guard asleep else { continue }
+                // Attribute overnight sleep to the wake-up day.
+                let key = Self.dayFormatter.string(from: sample.endDate)
+                byDay[key, default: 0] += sample.endDate.timeIntervalSince(sample.startDate) / 3600
+            }
+            let values = byDay.map { DayValue(day: $0.key, date: Self.dayFormatter.date(from: $0.key) ?? start, value: $0.value) }
+                .sorted { $0.date < $1.date }
+            completion(.success(values))
+        }
+        healthStore.execute(query)
+    }
+
+    private func electrocardiogramSummary(
+        start: Date,
+        end: Date,
+        completion: @escaping (Result<[String: Any], Error>) -> Void
+    ) {
+        let type = HKObjectType.electrocardiogramType()
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: [])
+        let query = HKSampleQuery(sampleType: type, predicate: predicate, limit: HKObjectQueryNoLimit,
+                                  sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)]) { _, samples, error in
+            if let error { completion(.failure(error)); return }
+            let ecgs = (samples ?? []).compactMap { $0 as? HKElectrocardiogram }
+            var summary: [String: Any] = ["available": !ecgs.isEmpty, "count": ecgs.count]
+            if let latest = ecgs.first { summary["latestAt"] = ISO8601DateFormatter().string(from: latest.startDate) }
+            completion(.success(summary))
+        }
+        healthStore.execute(query)
+    }
+
     // MARK: - Summarizing
 
     /// Packs a series into the shape the recommendation layer consumes:
@@ -309,7 +395,8 @@ class HealthTrendPlugin: CAPPlugin, CAPBridgedPlugin {
     /// people (20 ms and 80 ms are both unremarkable), so only a comparison
     /// against the same person's own baseline carries information.
     private func summarize(metric: QuantityMetric, series: [DayValue]) -> [String: Any] {
-        summarizeSeries(key: metric.key, unit: metric == .hrv ? "ms" : "count/min", series: series)
+        let unit = metric == .hrv ? "ms" : metric == .wristTemperature ? "°C" : "count/min"
+        return summarizeSeries(key: metric.key, unit: unit, series: series)
     }
 
     private func summarizeSeries(key: String, unit: String, series: [DayValue]) -> [String: Any] {
