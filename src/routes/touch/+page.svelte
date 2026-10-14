@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { generateTouchTexture } from '$lib/touch-texture';
+  import { TextureHapticsController } from '$lib/texture-haptics';
   import GroundingSteps from '$lib/GroundingSteps.svelte';
 
   type TouchStep = 'texture' | 'temperature' | 'result';
@@ -11,16 +12,52 @@
   let customTexture = $state('');
   let temperature = $state(35);
   let textureUrl = $state('');
+  let hapticsAvailable = $state(false);
+  let isFeelingTexture = $state(false);
+  const textureHaptics = new TextureHapticsController();
 
   onMount(() => {
     if (new URLSearchParams(window.location.search).get('flow') !== 'grounding') {
       window.location.replace('/');
     }
+    let active = true;
+    void textureHaptics.prepare().then((available) => {
+      if (active) hapticsAvailable = available;
+    });
+    return () => {
+      active = false;
+      void textureHaptics.end();
+    };
   });
+
+  function feelStart(event: PointerEvent) {
+    if (!hapticsAvailable) return;
+    event.preventDefault();
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    isFeelingTexture = true;
+    void textureHaptics.begin([...selectedTextures], event);
+  }
+
+  function feelMove(event: PointerEvent) {
+    if (!isFeelingTexture) return;
+    event.preventDefault();
+    textureHaptics.move([...selectedTextures], event);
+  }
+
+  function feelEnd() {
+    isFeelingTexture = false;
+    void textureHaptics.end();
+  }
 
   function toggleTexture(texture: string) {
     if (selectedTextures.includes(texture)) {
       selectedTextures = selectedTextures.filter((item) => item !== texture);
+      return;
+    }
+    // Soft is the initial suggestion, not an implicit layer. The first explicit
+    // choice replaces it so Rough doesn't accidentally become a buzzing blend.
+    if (selectedTextures.length === 1 && selectedTextures[0] === 'Soft') {
+      selectedTextures = [texture];
       return;
     }
     selectedTextures = [...selectedTextures.slice(-1), texture];
@@ -132,7 +169,7 @@
 
       {:else}
         <span class="step-count">Your translation</span>
-        <h1>A surface from<br />what you felt.</h1>
+        <h1>A surface from what you felt.</h1>
         <dl class="summary">
           <div><dt>Texture</dt><dd>{selectedTextures.join(' + ')}</dd></div>
           <div><dt>Temperature</dt><dd>{temperatureWord()}</dd></div>
@@ -143,16 +180,34 @@
       {/if}
     </div>
 
-    <aside class="texture-panel" aria-label="Live journal page preview">
-      <span class="binding-shadow"></span>
-      <span class="preview-label">Journal page · live</span>
-      {#if textureUrl}
-        <img src={textureUrl} alt="Generated tactile journal background" />
+    <div class="texture-preview">
+      <aside
+        class="texture-panel"
+        class:haptic-enabled={hapticsAvailable}
+        class:is-feeling={isFeelingTexture}
+        aria-label={hapticsAvailable ? 'Live journal page preview. Slide a finger across it to feel the selected texture.' : 'Live journal page preview'}
+        onpointerdown={feelStart}
+        onpointermove={feelMove}
+        onpointerup={feelEnd}
+        onpointercancel={feelEnd}
+        onlostpointercapture={feelEnd}
+      >
+        <span class="binding-shadow"></span>
+        <span class="preview-label">Journal page · live</span>
+        {#if textureUrl}
+          <img src={textureUrl} alt="Generated tactile journal background" draggable="false" />
+        {/if}
+        <span class="page-rule"></span>
+        <span class="page-number">01</span>
+        <p>{selectedTextures.join(' + ')} · {temperatureWord()}</p>
+      </aside>
+      {#if hapticsAvailable}
+        <div class="haptic-guide" aria-live="polite">
+          <span>{isFeelingTexture ? 'Feeling texture…' : 'Slide a finger across the page'}</span>
+          <button type="button" onpointerdown={(event) => event.stopPropagation()} onclick={() => textureHaptics.preview([...selectedTextures])}>Feel sample</button>
+        </div>
       {/if}
-      <span class="page-rule"></span>
-      <span class="page-number">01</span>
-      <p>{selectedTextures.join(' + ')} · {temperatureWord()}</p>
-    </aside>
+    </div>
   </section>
 </main>
 
@@ -198,30 +253,47 @@
   .summary dd { margin:0; text-transform:capitalize; text-align:right; }
   .translation { font-family:Georgia,serif; font-style:italic; font-size:19px; color:#646a63; margin:0 0 30px; }
   .download-link { margin-top:16px; padding:0; border:0; background:transparent; color:#666b65; cursor:pointer; font-size:11px; text-decoration:underline; text-underline-offset:4px; }
-  .texture-panel { width:min(100%,560px); aspect-ratio:3/4; position:relative; justify-self:start; overflow:hidden; background:#ebe7dd; border:1px solid rgba(89,80,65,.16); box-shadow:4px 3px 0 rgba(255,255,255,.5),8px 8px 0 rgba(112,101,81,.07),0 30px 75px rgba(38,42,36,.18); transform:rotate(.35deg); }
-  .texture-panel img { width:100%; height:100%; object-fit:cover; display:block; }
+  .texture-preview { width:min(100%,560px); justify-self:start; display:grid; gap:12px; }
+  .texture-panel { width:100%; aspect-ratio:3/4; position:relative; overflow:hidden; background:#ebe7dd; border:1px solid rgba(89,80,65,.16); box-shadow:4px 3px 0 rgba(255,255,255,.5),8px 8px 0 rgba(112,101,81,.07),0 30px 75px rgba(38,42,36,.18); transform:rotate(.35deg); transition:box-shadow .16s ease,border-color .16s ease; }
+  .texture-panel.haptic-enabled { cursor:grab; touch-action:none; user-select:none; -webkit-user-select:none; }
+  .texture-panel.is-feeling { cursor:grabbing; border-color:rgba(197,75,52,.48); box-shadow:4px 3px 0 rgba(255,255,255,.5),8px 8px 0 rgba(112,101,81,.07),0 24px 60px rgba(38,42,36,.2),0 0 0 3px rgba(197,75,52,.1); }
+  .texture-panel img { width:100%; height:100%; object-fit:cover; display:block; pointer-events:none; }
   .texture-panel::after { content:""; position:absolute; inset:0; box-shadow:inset 0 0 90px rgba(92,82,64,.1),inset 12px 0 22px rgba(72,61,45,.055); pointer-events:none; }
   .binding-shadow { position:absolute; z-index:2; inset:0 auto 0 0; width:14px; background:linear-gradient(90deg,rgba(73,61,43,.18),rgba(255,255,255,.08) 45%,transparent); opacity:.55; }
   .page-rule { position:absolute; z-index:2; left:11%; right:9%; top:12%; height:1px; background:rgba(76,73,65,.15); }
   .page-number { position:absolute; z-index:2; right:8%; top:7%; font-family:Georgia,serif; color:rgba(44,47,41,.42); font-size:13px; font-style:italic; }
   .preview-label { position:absolute; z-index:2; left:18px; top:18px; padding:8px 11px; color:#fff; background:rgba(27,33,28,.7); border-radius:100px; }
   .texture-panel p { position:absolute; z-index:2; left:18px; bottom:16px; margin:0; padding:8px 11px; color:#fff; background:rgba(27,33,28,.7); border-radius:100px; text-transform:capitalize; font-size:10px; letter-spacing:.08em; }
+  .haptic-guide { min-height:44px; display:flex; align-items:center; justify-content:space-between; gap:12px; color:#666b65; font-size:11px; }
+  .haptic-guide button { min-height:44px; padding:0 14px; flex:0 0 auto; border:1px solid #aaa89f; border-radius:100px; background:rgba(255,255,255,.32); cursor:pointer; }
   @media (max-width:900px) {
     main { height:100dvh; overflow:hidden; }
     .touch-layout { height:100dvh; min-height:0; display:flex; flex-direction:column; gap:24px; align-items:stretch; overflow-y:auto; overscroll-behavior-y:contain; -webkit-overflow-scrolling:touch; padding:calc(88px + env(safe-area-inset-top)) 20px max(32px, calc(20px + env(safe-area-inset-bottom))); }
     .question-panel { max-width:560px; width:100%; margin:0 auto; flex:0 0 auto; }
-    .texture-panel { display:block; order:-1; width:min(54vw,220px); max-width:100%; aspect-ratio:3/4; align-self:center; justify-self:auto; flex:0 0 auto; box-shadow:3px 3px 0 rgba(255,255,255,.5),6px 6px 0 rgba(112,101,81,.07),0 16px 38px rgba(38,42,36,.16); }
+    .texture-preview { order:-1; width:min(72vw,292px); max-width:100%; align-self:center; justify-self:auto; flex:0 0 auto; gap:8px; }
+    .texture-panel { display:block; box-shadow:3px 3px 0 rgba(255,255,255,.5),6px 6px 0 rgba(112,101,81,.07),0 16px 38px rgba(38,42,36,.16); }
     .preview-label { left:10px; top:10px; padding:6px 8px; font-size:8px; }
     .texture-panel p { left:10px; right:10px; bottom:10px; max-width:calc(100% - 20px); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding:6px 8px; }
     .eyebrow { display:none; }
-    h1 { font-size:clamp(38px,11vw,46px); }
+    h1 { font-size:clamp(34px,9vw,40px); line-height:1.01; margin-bottom:18px; }
+    main.result .touch-layout { gap:20px; }
+    main.result h1 { max-width:13ch; font-size:clamp(27px,7.2vw,32px); line-height:1.04; text-wrap:balance; }
+    main.result .summary { margin:22px 0; }
+    main.result .translation { margin-bottom:22px; }
     .texture-grid { grid-template-columns:repeat(2,1fr); }
     .slider-wrap { margin:48px 0 44px; }
   }
   @media (max-width:900px) and (orientation:landscape) {
     .touch-layout { display:grid; grid-template-columns:minmax(150px,32vw) minmax(0,1fr); gap:24px; align-items:start; padding-top:calc(76px + env(safe-area-inset-top)); }
-    .texture-panel { order:0; grid-column:1; grid-row:1; width:min(100%,calc((100svh - 104px) * .75),210px); align-self:start; position:relative; top:auto; }
+    .texture-preview { order:0; grid-column:1; grid-row:1; width:min(100%,calc((100svh - 104px) * .75),220px); align-self:start; position:relative; top:auto; }
     .question-panel { grid-column:2; grid-row:1; }
+  }
+  @media (max-width:380px) and (orientation:portrait) {
+    .touch-layout { padding-left:16px; padding-right:16px; }
+    .texture-preview { width:min(70vw,260px); }
+    h1 { font-size:32px; }
+    main.result h1 { font-size:27px; }
+    .primary,.secondary { padding-left:18px; padding-right:18px; }
   }
   @media (prefers-reduced-motion:reduce) {
     *,*::before,*::after { scroll-behavior:auto !important; transition-duration:.01ms !important; animation-duration:.01ms !important; }

@@ -11,6 +11,7 @@ class GroundingBridgeViewController: CAPBridgeViewController {
         bridge?.registerPluginInstance(HealthTrendPlugin())
         bridge?.registerPluginInstance(WatchSignalPlugin())
         bridge?.registerPluginInstance(PhotoExporterPlugin())
+        bridge?.registerPluginInstance(TextureHapticsPlugin())
     }
 }
 

@@ -7,12 +7,12 @@ type TextureKind = 'soft' | 'rough' | 'smooth' | 'bumpy' | 'fuzzy' | 'sticky' | 
 
 const textureAliases: Record<TextureKind, string[]> = {
   soft: ['soft', 'gentle', 'plush', 'cushion', 'tender'],
-  rough: ['rough', 'grain', 'grainy', 'gritty', 'sandy', 'coarse', 'scratchy'],
-  smooth: ['smooth', 'silky', 'polished', 'glassy', 'sleek'],
+  rough: ['rough', 'grain', 'grainy', 'gritty', 'sandy', 'coarse', 'scratchy', 'cement', 'concrete'],
+  smooth: ['smooth', 'silky', 'polished', 'glass', 'glassy', 'sleek'],
   bumpy: ['bumpy', 'raised', 'knobbly', 'lumpy', 'uneven'],
-  fuzzy: ['fuzzy', 'furry', 'fluffy', 'woolly', 'velvety'],
+  fuzzy: ['fuzzy', 'furry', 'fluffy', 'woolly', 'velvety', 'fabric'],
   sticky: ['sticky', 'tacky', 'gummy', 'rubbery', 'damp'],
-  firm: ['firm', 'hard', 'solid', 'dense', 'stiff'],
+  firm: ['firm', 'hard', 'solid', 'dense', 'stiff', 'metal', 'wood'],
   slippery: ['slippery', 'slick', 'oily', 'wet', 'slippy']
 };
 

@@ -15,6 +15,7 @@
 		9A0100022FF0000000000002 /* NativeVisionSegmentPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A0200022FF0000000000002 /* NativeVisionSegmentPlugin.swift */; };
 		9A0100032FF0000000000003 /* HealthTrendPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A0200032FF0000000000003 /* HealthTrendPlugin.swift */; };
 		B00100012FF1000000000001 /* WatchSignalPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00200012FF1000000000001 /* WatchSignalPlugin.swift */; };
+		C00100012FF2000000000001 /* TextureHapticsPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00200012FF2000000000001 /* TextureHapticsPlugin.swift */; };
 		B00100022FF1000000000002 /* HeartRateWatchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00200022FF1000000000002 /* HeartRateWatchApp.swift */; };
 		B00100032FF1000000000003 /* HeartRateWorkoutManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00200032FF1000000000003 /* HeartRateWorkoutManager.swift */; };
 		B00100042FF1000000000004 /* WatchContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00200042FF1000000000004 /* WatchContentView.swift */; };
@@ -64,6 +65,7 @@
 		9A0200032FF0000000000003 /* HealthTrendPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthTrendPlugin.swift; sourceTree = "<group>"; };
 		9A0200042FF0000000000004 /* App.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = App.entitlements; sourceTree = "<group>"; };
 		B00200012FF1000000000001 /* WatchSignalPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchSignalPlugin.swift; sourceTree = "<group>"; };
+		C00200012FF2000000000001 /* TextureHapticsPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextureHapticsPlugin.swift; sourceTree = "<group>"; };
 		B00200022FF1000000000002 /* HeartRateWatchApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeartRateWatchApp.swift; sourceTree = "<group>"; };
 		B00200032FF1000000000003 /* HeartRateWorkoutManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeartRateWorkoutManager.swift; sourceTree = "<group>"; };
 		B00200042FF1000000000004 /* WatchContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchContentView.swift; sourceTree = "<group>"; };
@@ -120,6 +122,7 @@
 				9A0200022FF0000000000002 /* NativeVisionSegmentPlugin.swift */,
 				9A0200032FF0000000000003 /* HealthTrendPlugin.swift */,
 				B00200012FF1000000000001 /* WatchSignalPlugin.swift */,
+				C00200012FF2000000000001 /* TextureHapticsPlugin.swift */,
 				9A0200042FF0000000000004 /* App.entitlements */,
 				9582B6822FE993A50072D4E8 /* SceneDelegate.swift */,
 				50379B222058CBB4000EE86E /* capacitor.config.json */,
@@ -264,6 +267,7 @@
 				9A0100022FF0000000000002 /* NativeVisionSegmentPlugin.swift in Sources */,
 				9A0100032FF0000000000003 /* HealthTrendPlugin.swift in Sources */,
 				B00100012FF1000000000001 /* WatchSignalPlugin.swift in Sources */,
+				C00100012FF2000000000001 /* TextureHapticsPlugin.swift in Sources */,
 				9582B6832FE993A70072D4E8 /* SceneDelegate.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
