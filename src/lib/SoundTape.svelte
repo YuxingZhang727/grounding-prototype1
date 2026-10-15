@@ -32,7 +32,7 @@
   let playing = false;
   let playbackTime = 0;
   $: shown = selected?.frames ?? frames;
-  $: previewWidth = state === 'recording' ? Math.min(560, Math.max(120, frames.length * 15)) : selected ? 120 + length * 4.4 : 240;
+  $: previewWidth = state === 'recording' ? Math.min(560, Math.max(120, 120 + elapsed * 110)) : selected ? 120 + length * 4.4 : 240;
   $: preview = tapeImage(shown, previewWidth, state === 'recording');
   $: livePath = waveformPath(liveTrace, previewWidth, true);
   $: playbackSamples = selected?.trace?.length ? selected.trace : legacyTrace(selected?.frames ?? []);
@@ -54,8 +54,8 @@
     });
     const visible = live ? [...source].reverse() : source;
     const peak = Math.max(.0001, ...visible.map(sample => Math.abs(sample)));
-    const visualStrength = Math.min(1, peak * (live ? 5.2 : 4));
-    const amplitude = 7 + visualStrength * (live ? 24 : 20);
+    const visualStrength = Math.min(1, Math.sqrt(peak * (live ? 8 : 5)));
+    const amplitude = 8 + visualStrength * (live ? 30 : 23);
     const points = visible.map((sample, index) => {
       const x = index / Math.max(1, visible.length - 1) * width;
       const y = 44 + (sample / peak) * amplitude;
@@ -74,10 +74,30 @@
   }
 
   function traceSamples(wave: Uint8Array, points: number) {
-    return Array.from({ length:points }, (_, point) => {
-      const index = Math.min(wave.length-1, Math.floor((point+.5) / points * wave.length));
-      return (wave[index] - 128) / 128;
+    const peaks = Array.from({ length:points }, (_, point) => {
+      const start = Math.floor(point / points * wave.length);
+      const end = Math.max(start + 1, Math.floor((point + 1) / points * wave.length));
+      let strongest = 0;
+      for (let index = start; index < end; index++) {
+        const sample = (wave[index] - 128) / 128;
+        if (Math.abs(sample) > Math.abs(strongest)) strongest = sample;
+      }
+      return strongest;
     });
+    return peaks.map((sample, index) => {
+      const previous = peaks[index - 1] ?? sample;
+      const next = peaks[index + 1] ?? sample;
+      return previous * .2 + sample * .6 + next * .2;
+    });
+  }
+
+  function easeFrame(next: SoundFrame, previous?: SoundFrame): SoundFrame {
+    if (!previous) return next;
+    return {
+      level: previous.level * .42 + next.level * .58,
+      brightness: previous.brightness * .5 + next.brightness * .5,
+      richness: previous.richness * .5 + next.richness * .5
+    };
   }
 
   function legacyTrace(oldFrames: SoundFrame[]) {
@@ -123,7 +143,7 @@
       const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
       if (disposed || id !== requestId || (isHold && !held)) { stream.getTracks().forEach(t => t.stop()); releaseResources(); if (!disposed) state = 'idle'; return; }
       media = stream;
-      const analyser = context!.createAnalyser(); analyser.fftSize = 2048; analyser.smoothingTimeConstant = .65;
+      const analyser = context!.createAnalyser(); analyser.fftSize = 1024; analyser.smoothingTimeConstant = .35;
       context!.createMediaStreamSource(stream).connect(analyser);
       const wave = new Uint8Array(analyser.fftSize), spectrum = new Uint8Array(analyser.frequencyBinCount);
       const mimeType = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm'].find(type => MediaRecorder.isTypeSupported(type));
@@ -145,12 +165,17 @@
       current.start(250); state = 'recording';
       timer = setInterval(() => {
         analyser.getByteTimeDomainData(wave); analyser.getByteFrequencyData(spectrum);
-        frames = [...frames, analyseSound(wave, spectrum)];
-        liveTrace = traceSamples(wave, 72);
+        const nextFrame = easeFrame(analyseSound(wave, spectrum), frames.at(-1));
+        const nextTrace = traceSamples(wave, 72);
+        frames = [...frames, nextFrame];
+        liveTrace = nextTrace.map((sample, index) => {
+          const previous = liveTrace[index] ?? sample;
+          return previous * .56 + sample * .44;
+        });
         recordingTrace = [...recordingTrace, ...traceSamples(wave, 6)].slice(-1800);
         elapsed = (performance.now() - started) / 1000;
         if (elapsed >= 30) stop();
-      }, 100);
+      }, 66);
       stream.getAudioTracks().forEach(track => { track.onended = stop; });
     } catch (cause) {
       releaseResources(); if (disposed) return;
@@ -327,7 +352,7 @@
   .machine-detail { position:absolute; left:18px; bottom:27px; display:flex; gap:4px; }.machine-detail i { display:block; width:4px; height:4px; border-radius:50%; background:#6f776a; opacity:.7; }.machine-label { position:absolute; left:50%; bottom:22px; transform:translateX(-50%); white-space:nowrap; font-size:8px; font-weight:650; letter-spacing:.2em; }
   .slot { position:absolute; right:-7px; top:60px; height:101px; width:13px; border-radius:5px; background:linear-gradient(90deg,#50594d,#737c6c 68%,#424940); box-shadow:1px 2px 4px #1b211c33; }.slot span { position:absolute; right:-3px; top:7px; bottom:7px; width:4px; border-radius:2px; background:#313831; }
   .feet { position:absolute; left:17px; right:17px; bottom:-6px; display:flex; justify-content:space-between; }.feet i { width:26px; height:7px; border-radius:0 0 5px 5px; background:#596152; box-shadow:0 3px 5px #1b211c24; }
-  .feed { flex:1; max-width:560px; min-width:0; text-align:left; position:relative; padding-top:35px; }.feed-visual { height:88px; position:relative; max-width:none; transform-origin:0 50%; filter:drop-shadow(0 8px 7px #1b211c12); transition:transform .26s cubic-bezier(.2,.75,.3,1),opacity .18s; }.feed-visual.tear-ready { transform:translateY(var(--tear-drop)) rotate(var(--tear-angle)); }.feed-visual.previewed { opacity:0; pointer-events:none; }.feed-visual.tearing { animation:torn-away .24s ease-in forwards; }.feed img { width:100%; height:88px; display:block; max-width:none; transition:opacity .2s ease; }.live-wave { position:absolute; inset:0; width:100%; height:100%; overflow:visible; }.live-wave line { stroke:#596152; stroke-width:.7; stroke-dasharray:2 5; opacity:.22; }.live-wave path { fill:none; stroke-linecap:round; stroke-linejoin:round; vector-effect:non-scaling-stroke; }.live-wave .wave-halo { stroke:#fff8ec; stroke-width:6; opacity:.72; }.live-wave .wave-main { stroke:#a33f35; stroke-width:3; filter:drop-shadow(0 1px 1px #7b302533); }.workbench.recording .feed img { opacity:.42; }.tear-grip { position:absolute; z-index:3; left:min(110px,calc(100% - 38px)); bottom:-21px; width:38px; height:42px; min-height:42px; padding:0; border:0; border-radius:0 0 18px 18px; background:#f7f1e7e8; box-shadow:0 4px 8px #1b211c1c; touch-action:none; display:grid; place-items:center; color:#7b3f35; }.tear-grip::before { content:""; position:absolute; left:4px; right:4px; top:0; border-top:1px dashed #7b3f3577; }.tear-grip span { transform:translateY(2px); font-size:16px; }.edge-label { position:absolute; left:18px; bottom:-39px; white-space:nowrap; font:italic 14px Georgia,serif; color:var(--muted); }
+  .feed { flex:1; max-width:560px; min-width:0; text-align:left; position:relative; padding-top:35px; }.feed-visual { height:88px; position:relative; max-width:none; transform-origin:0 50%; filter:drop-shadow(0 8px 7px #1b211c12); transition:transform .26s cubic-bezier(.2,.75,.3,1),opacity .18s; }.feed-visual.tear-ready { transform:translateY(var(--tear-drop)) rotate(var(--tear-angle)); }.feed-visual.previewed { opacity:0; pointer-events:none; }.feed-visual.tearing { animation:torn-away .24s ease-in forwards; }.feed img { width:100%; height:88px; display:block; max-width:none; transition:opacity .12s ease; }.live-wave { position:absolute; inset:0; width:100%; height:100%; overflow:visible; }.live-wave line { stroke:#596152; stroke-width:.7; stroke-dasharray:2 5; opacity:.3; }.live-wave path { fill:none; stroke-linecap:round; stroke-linejoin:round; vector-effect:non-scaling-stroke; }.live-wave .wave-halo { stroke:#fff8ec; stroke-width:7; opacity:.82; }.live-wave .wave-main { stroke:#9f392f; stroke-width:3.4; filter:drop-shadow(0 1px 1px #7b302544); }.workbench.recording .feed img { opacity:.82; }.tear-grip { position:absolute; z-index:3; left:min(110px,calc(100% - 38px)); bottom:-21px; width:38px; height:42px; min-height:42px; padding:0; border:0; border-radius:0 0 18px 18px; background:#f7f1e7e8; box-shadow:0 4px 8px #1b211c1c; touch-action:none; display:grid; place-items:center; color:#7b3f35; }.tear-grip::before { content:""; position:absolute; left:4px; right:4px; top:0; border-top:1px dashed #7b3f3577; }.tear-grip span { transform:translateY(2px); font-size:16px; }.edge-label { position:absolute; left:18px; bottom:-39px; white-space:nowrap; font:italic 14px Georgia,serif; color:var(--muted); }
   @keyframes torn-away { to { transform:translate(22px,46px) rotate(10deg); opacity:0; } }
   .recording .roll { animation:turn 10s linear infinite; } @keyframes turn { to { transform:rotate(360deg); } }
   .status { min-height:25px; color:var(--muted); font:italic 17px Georgia,serif; }.controls { display:flex; justify-content:center; align-items:center; gap:24px; }.time { font-variant-numeric:tabular-nums; font-size:12px; color:var(--muted); }

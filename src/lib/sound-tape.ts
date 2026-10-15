@@ -19,16 +19,17 @@ function displayedFrames(frames: SoundFrame[], columns: number, active: boolean)
     return frames[index] ?? { level: 0, brightness: .25, richness: 0 };
   });
 
-  // A short weighted average removes microphone flicker while preserving audible events.
+  // Live dots react quickly; saved tape keeps a gentler paper-like silhouette.
   return sampled.map((frame, index) => {
     let weight = 0;
     let level = 0;
     let brightness = 0;
     let richness = 0;
-    for (let offset = -2; offset <= 2; offset++) {
+    const radius = active ? 1 : 2;
+    for (let offset = -radius; offset <= radius; offset++) {
       const nearby = sampled[index + offset];
       if (!nearby) continue;
-      const currentWeight = 3 - Math.abs(offset);
+      const currentWeight = radius + 1 - Math.abs(offset);
       weight += currentWeight;
       level += nearby.level * currentWeight;
       brightness += nearby.brightness * currentWeight;
@@ -55,7 +56,7 @@ export function tapeSvg(frames: SoundFrame[], width = 560, active = false): stri
   const baseHue = 28 + average * 112;
   const centre = 44;
   const xAt = (col: number) => 8 + col * 15;
-  const spreadAt = (level: number) => 7 + Math.pow(level, .72) * 29;
+  const spreadAt = (level: number) => 5 + Math.pow(level, .6) * 34;
   const top = shown.map((frame, col) => `${xAt(col).toFixed(1)},${(centre-spreadAt(frame.level)-4).toFixed(1)}`).join(' ');
   const bottom = shown.map((frame, col) => `${xAt(col).toFixed(1)},${(centre+spreadAt(frame.level)+4).toFixed(1)}`).reverse().join(' ');
   let dots = '';
@@ -66,7 +67,7 @@ export function tapeSvg(frames: SoundFrame[], width = 560, active = false): stri
       const x = xAt(col);
       const y = centre + ((row - 1.5) / 1.5) * spread;
       const hue = baseHue + (frame.brightness-average) * 28;
-      const radius = 2.05 + frame.level * 1.25 + frame.richness * .3;
+      const radius = 2.15 + frame.level * 1.55 + frame.richness * .35;
       dots += `<circle cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="${radius.toFixed(2)}" fill="hsl(${hue.toFixed(1)} 46% 29%)" opacity="${(.66 + frame.level * .3).toFixed(2)}"/>`;
     }
   }
