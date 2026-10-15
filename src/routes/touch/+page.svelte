@@ -271,7 +271,7 @@
     .touch-layout { height:100dvh; min-height:0; display:flex; flex-direction:column; gap:8px; align-items:stretch; overflow-y:auto; overscroll-behavior-y:contain; -webkit-overflow-scrolling:touch; padding:calc(66px + env(safe-area-inset-top)) 20px max(16px, calc(10px + env(safe-area-inset-bottom))); }
     .question-panel { max-width:560px; width:100%; margin:0 auto; flex:0 0 auto; }
     .texture-preview { order:-1; width:min(100%,560px); max-width:100%; align-self:center; justify-self:auto; flex:0 0 auto; gap:4px; }
-    .texture-panel { display:block; width:100%; height:clamp(270px,34svh,320px); aspect-ratio:auto; box-shadow:3px 3px 0 rgba(255,255,255,.5),6px 6px 0 rgba(112,101,81,.07),0 12px 30px rgba(38,42,36,.13); transform:none; }
+    .texture-panel { display:block; width:100%; height:auto; aspect-ratio:3/4; box-shadow:3px 3px 0 rgba(255,255,255,.5),6px 6px 0 rgba(112,101,81,.07),0 12px 30px rgba(38,42,36,.13); transform:none; }
     .preview-label { left:10px; top:10px; padding:6px 8px; font-size:8px; }
     .texture-panel p { left:10px; right:10px; bottom:10px; max-width:calc(100% - 20px); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding:6px 8px; }
     .haptic-guide { min-height:40px; font-size:10px; }
@@ -303,7 +303,7 @@
   }
   @media (max-width:380px) and (orientation:portrait) {
     .touch-layout { padding-left:16px; padding-right:16px; }
-    .texture-panel { height:clamp(250px,31svh,290px); }
+    .texture-panel { height:auto; aspect-ratio:3/4; }
     h1 { font-size:28px; }
     main.result h1 { font-size:27px; }
     .primary,.secondary { padding-left:18px; padding-right:18px; }
