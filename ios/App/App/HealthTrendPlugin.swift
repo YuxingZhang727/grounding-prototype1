@@ -381,9 +381,108 @@ class HealthTrendPlugin: CAPPlugin, CAPBridgedPlugin {
             let ecgs = (samples ?? []).compactMap { $0 as? HKElectrocardiogram }
             var summary: [String: Any] = ["available": !ecgs.isEmpty, "count": ecgs.count]
             if let latest = ecgs.first { summary["latestAt"] = ISO8601DateFormatter().string(from: latest.startDate) }
-            completion(.success(summary))
+            let visibleECGs = Array(ecgs.prefix(12))
+            guard !visibleECGs.isEmpty else {
+                summary["recordings"] = []
+                completion(.success(summary))
+                return
+            }
+
+            let group = DispatchGroup()
+            let resultLock = NSLock()
+            var recordings = Array(repeating: [String: Any](), count: visibleECGs.count)
+            for (index, ecg) in visibleECGs.enumerated() {
+                var recording: [String: Any] = [
+                    "id": ecg.uuid.uuidString,
+                    "recordedAt": ISO8601DateFormatter().string(from: ecg.startDate),
+                    "classification": self.electrocardiogramClassification(ecg.classification),
+                    "durationSeconds": max(0, ecg.endDate.timeIntervalSince(ecg.startDate)),
+                    "source": ecg.sourceRevision.source.name
+                ]
+                if let averageHeartRate = ecg.averageHeartRate {
+                    recording["averageBPM"] = averageHeartRate.doubleValue(
+                        for: HKUnit.count().unitDivided(by: .minute())
+                    )
+                }
+                group.enter()
+                self.electrocardiogramWaveform(ecg) { waveform in
+                    if !waveform.isEmpty { recording["waveform"] = waveform }
+                    resultLock.lock()
+                    recordings[index] = recording
+                    resultLock.unlock()
+                    group.leave()
+                }
+            }
+            group.notify(queue: .global(qos: .userInitiated)) {
+                summary["recordings"] = recordings
+                completion(.success(summary))
+            }
         }
         healthStore.execute(query)
+    }
+
+    private func electrocardiogramWaveform(
+        _ electrocardiogram: HKElectrocardiogram,
+        completion: @escaping ([Double]) -> Void
+    ) {
+        var millivolts: [Double] = []
+        let query = HKElectrocardiogramQuery(electrocardiogram) { _, result in
+            switch result {
+            case .measurement(let measurement):
+                if let voltage = measurement.quantity(for: .appleWatchSimilarToLeadI) {
+                    millivolts.append(voltage.doubleValue(for: HKUnit.voltUnit(with: .milli)))
+                }
+            case .done:
+                completion(self.downsampleECG(millivolts, targetCount: 240))
+            case .error:
+                completion([])
+            @unknown default:
+                completion([])
+            }
+        }
+        healthStore.execute(query)
+    }
+
+    /// Keeps each bucket's local minimum and maximum in time order so narrow
+    /// QRS peaks survive the reduction from roughly 15,000 samples to 240.
+    private func downsampleECG(_ values: [Double], targetCount: Int) -> [Double] {
+        guard values.count > targetCount, targetCount >= 4 else { return values }
+        let bucketCount = targetCount / 2
+        let bucketSize = Double(values.count) / Double(bucketCount)
+        var reduced: [Double] = []
+        reduced.reserveCapacity(targetCount)
+
+        for bucket in 0..<bucketCount {
+            let start = Int(Double(bucket) * bucketSize)
+            let end = min(values.count, max(start + 1, Int(Double(bucket + 1) * bucketSize)))
+            let slice = values[start..<end]
+            guard let minimum = slice.enumerated().min(by: { $0.element < $1.element }),
+                  let maximum = slice.enumerated().max(by: { $0.element < $1.element }) else { continue }
+            if minimum.offset < maximum.offset {
+                reduced.append(minimum.element)
+                reduced.append(maximum.element)
+            } else {
+                reduced.append(maximum.element)
+                reduced.append(minimum.element)
+            }
+        }
+        return reduced
+    }
+
+    private func electrocardiogramClassification(
+        _ classification: HKElectrocardiogram.Classification
+    ) -> String {
+        switch classification {
+        case .sinusRhythm: return "Sinus rhythm"
+        case .atrialFibrillation: return "Atrial fibrillation"
+        case .inconclusiveLowHeartRate: return "Inconclusive · low heart rate"
+        case .inconclusiveHighHeartRate: return "Inconclusive · high heart rate"
+        case .inconclusivePoorReading: return "Inconclusive · poor recording"
+        case .inconclusiveOther: return "Inconclusive"
+        case .unrecognized: return "Unrecognized"
+        case .notSet: return "Not classified"
+        @unknown default: return "Not classified"
+        }
     }
 
     // MARK: - Summarizing

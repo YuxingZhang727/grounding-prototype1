@@ -1,6 +1,7 @@
 import CoreMotion
 import Foundation
 import HealthKit
+import WatchKit
 import WatchConnectivity
 
 struct AnxietyCheckIn: Codable, Identifiable, Sendable {
@@ -152,6 +153,10 @@ final class HeartRateWorkoutManager: NSObject, ObservableObject {
                 self.startMotionUpdates()
                 self.startElapsedClock()
                 self.sendSnapshot(force: true)
+                // A clear, one-time confirmation that collection has begun.
+                // The workout session can now continue after the user returns
+                // to the watch face, where watchOS keeps its workout indicator.
+                WKInterfaceDevice.current().play(.start)
             }
         }
     }
@@ -176,6 +181,7 @@ final class HeartRateWorkoutManager: NSObject, ObservableObject {
         motionIntensity = 0
         signalState = .ready
         sendSnapshot(force: true)
+        WKInterfaceDevice.current().play(.stop)
     }
 
     func saveCheckIn() {

@@ -33,6 +33,14 @@ private struct LiveSignalView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 10) {
+                if manager.isRunning {
+                    Label("Monitoring in background", systemImage: "waveform.path.ecg")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.mint)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityLabel("Heart rate monitoring is active and continues in the background")
+                }
+
                 HStack(spacing: 6) {
                     Circle()
                         .fill(accent)
@@ -68,7 +76,7 @@ private struct LiveSignalView: View {
                             .foregroundStyle(.secondary)
                             .monospacedDigit()
                     } else {
-                        Text(manager.isRunning ? "Keep still to build baseline" : "Start to read live heart rate")
+                        Text(manager.isRunning ? "Active · waiting for heart rate" : "Start to read live heart rate")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
@@ -79,7 +87,7 @@ private struct LiveSignalView: View {
 
                 HStack(spacing: 12) {
                     Label(durationText, systemImage: "timer")
-                    Label(motionText, systemImage: "waveform.path")
+                    Label(manager.isRunning ? "Active" : motionText, systemImage: manager.isRunning ? "checkmark.circle.fill" : "waveform.path")
                 }
                 .font(.caption2)
                 .foregroundStyle(.secondary)
@@ -101,6 +109,14 @@ private struct LiveSignalView: View {
                 .tint(manager.isRunning ? .red : .mint)
                 .disabled(manager.signalState == .requestingAccess)
                 .accessibilityHint(manager.isRunning ? "Ends live signal collection" : "Requests permission and starts live signal collection")
+
+                if manager.isRunning {
+                    Text("You can return to the watch face. Collection will continue until you stop it here or on iPhone.")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
 
                 Button(action: openCheckIn) {
                     Label("Record check-in", systemImage: "square.and.pencil")

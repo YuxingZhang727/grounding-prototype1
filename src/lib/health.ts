@@ -38,6 +38,17 @@ export type TrendMetric = {
   series: TrendPoint[];
 };
 
+export type ECGRecording = {
+  id: string;
+  recordedAt: string;
+  classification: string;
+  durationSeconds: number;
+  averageBPM?: number;
+  source?: string;
+  /** Downsampled Apple Watch Lead I voltage values, in millivolts. */
+  waveform?: number[];
+};
+
 export type TrendsPayload = {
   hrv?: TrendMetric;
   restingHeartRate?: TrendMetric;
@@ -49,6 +60,7 @@ export type TrendsPayload = {
     available: boolean;
     count: number;
     latestAt?: string;
+    recordings?: ECGRecording[];
   };
   generatedAt: string;
   trendDays: number;

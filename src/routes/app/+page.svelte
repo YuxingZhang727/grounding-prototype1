@@ -13,7 +13,8 @@
     healthTrendsAvailable,
     requestHealthAuthorization,
     type TrendMetric,
-    type TrendsPayload
+    type TrendsPayload,
+    type ECGRecording
   } from '$lib/health';
   import {
     getLatestWatchSignal,
@@ -239,13 +240,20 @@
     return 'Waiting';
   }
   function watchLiveLabel() {
-    return watchHasReading() ? `${Math.round(watchSnapshot.bpm!)} bpm` : watchStatusLabel();
+    if (watchSnapshot.isRunning) {
+      return watchHasReading() ? `Monitoring · ${Math.round(watchSnapshot.bpm!)} bpm` : 'Monitoring';
+    }
+    return watchStatusLabel();
   }
   function watchStatusDescription() {
     if (!watchAvailability.activated) return 'Connecting to your paired Apple Watch…';
     if (!watchAvailability.paired) return 'Pair an Apple Watch to receive live body signals.';
     if (!watchAvailability.watchAppInstalled) return 'Install the Grounding Watch app to begin.';
-    if (watchSnapshot.isRunning) return watchSnapshot.status || 'Receiving signals from your watch.';
+    if (watchSnapshot.isRunning) {
+      return watchHasReading()
+        ? `Monitoring is active in the background. Latest heart rate: ${Math.round(watchSnapshot.bpm!)} bpm.`
+        : 'Monitoring is active in the background. Waiting for the next heart-rate reading.';
+    }
     return 'Open Grounding on your watch and start a measurement.';
   }
   function openWatchSettings() {
@@ -320,6 +328,13 @@
     await stopWatchMeasurement().catch(() => false);
     watchCalibrationState = 'idle';
     watchCalibrationMessage = '';
+  }
+  async function stopActiveWatchMeasurement() {
+    const delivered = await stopWatchMeasurement().catch(() => false);
+    watchConnectionMessage = delivered
+      ? 'Stop request sent to Apple Watch.'
+      : 'The Watch could not be reached. Stop the session from the Watch app.';
+    watchConnectionState = delivered ? 'success' : 'error';
   }
   function normalizeWatchSnapshot(snapshot: WatchSignalSnapshot): WatchSignalSnapshot {
     const raw = snapshot as WatchSignalSnapshot & Record<string, unknown>;
@@ -399,7 +414,7 @@
   }
   function selectTab(next: Tab, replace = false) {
     tab = next;
-    const url = new URL(location.href); url.searchParams.set('tab', next);
+    const url = new URL(location.href); url.searchParams.set('tab', next); url.searchParams.delete('history');
     void goto(url.pathname + url.search, { replaceState:replace, noScroll:true, keepFocus:true });
     document.querySelector('.app-scroll')?.scrollTo({ top:0, behavior:'instant' });
   }
@@ -659,6 +674,31 @@
     if (Number.isNaN(date.getTime())) return '';
     return new Intl.DateTimeFormat(appLocale, { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' }).format(date);
   }
+  function ecgRecordedAt(timestamp: string | undefined) {
+    if (!timestamp) return 'Date unavailable';
+    const date = new Date(timestamp);
+    if (Number.isNaN(date.getTime())) return 'Date unavailable';
+    return new Intl.DateTimeFormat(appLocale, { month:'short', day:'numeric', year:'numeric', hour:'numeric', minute:'2-digit' }).format(date);
+  }
+  function ecgDuration(seconds: number) {
+    if (!Number.isFinite(seconds) || seconds <= 0) return 'Duration unavailable';
+    if (seconds < 60) return `${Math.round(seconds)} sec`;
+    const minutes = Math.floor(seconds / 60);
+    const remainder = Math.round(seconds % 60);
+    return `${minutes} min${remainder ? ` ${remainder} sec` : ''}`;
+  }
+  function ecgWaveformPoints(recording: ECGRecording) {
+    const samples = recording.waveform ?? [];
+    if (samples.length < 2) return '';
+    const minimum = Math.min(...samples);
+    const maximum = Math.max(...samples);
+    const span = Math.max(maximum - minimum, 0.05);
+    return samples.map((sample, index) => {
+      const x = index / (samples.length - 1) * 320;
+      const y = 78 - ((sample - minimum) / span) * 68;
+      return `${x.toFixed(2)},${y.toFixed(2)}`;
+    }).join(' ');
+  }
   async function refreshHealthTrends() {
     healthState = 'loading';
     healthMessage = 'Refreshing your recent Apple Health data…';
@@ -786,7 +826,7 @@
         watchRequestInFlight = false;
       }
     }, 2_000);
-    const back = () => tab = readTab(); window.addEventListener('popstate', back);
+    const back = () => { tab = readTab(); }; window.addEventListener('popstate', back);
     return () => {
       watchListenersDisposed = true;
       window.clearInterval(watchRefreshTimer);
@@ -879,19 +919,58 @@
           {:else}
             <div class="health-empty"><strong>{healthState === 'ready' ? 'Connect Apple Health to add personal context.' : 'Recent data could not be loaded.'}</strong><p>Grounding only reads the signals you choose, and the app remains useful without them.</p></div>
           {/if}
-          {#if healthState === 'connected' || healthState === 'empty'}
-            <div class="ecg-summary" class:unavailable={!healthTrends?.ecg?.available}>
-              <div>
-                <strong>ECG recordings</strong>
-                <span>{healthTrends?.ecg?.available ? `${healthTrends.ecg.count} available in Apple Health` : 'No readable recordings yet'}</span>
+          <section class="ecg-section" aria-labelledby="ecg-recordings-heading">
+            <div class="ecg-section-heading">
+              <div class="ecg-heading-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M3 12h4l2-5 4 10 3-7 2 2h3"/></svg>
               </div>
-              {#if healthTrends?.ecg?.available}
-                <small>View-only · not used for today’s feeling</small>
-              {:else}
-                <button class="ecg-access" onclick={connectHealth}>Review ECG access</button>
-              {/if}
+              <div><p class="eyebrow">Apple Watch · View only</p><h3 id="ecg-recordings-heading">ECG recordings</h3></div>
+              {#if healthTrends?.ecg?.count}<span class="ecg-count">{healthTrends.ecg.count}</span>{/if}
             </div>
-          {/if}
+            {#if (healthState === 'connected' || healthState === 'empty') && healthTrends?.ecg?.recordings?.length}
+              <div class="ecg-list">
+                {#each healthTrends.ecg.recordings as recording}
+                  <article>
+                    <div class="ecg-record-header">
+                      <div class="ecg-record-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24"><path d="M6 2h8l4 4v16H6zM14 2v5h4M8.5 14h2l1-3 2 6 1.5-3h2.5"/></svg>
+                      </div>
+                      <div class="ecg-recording-copy">
+                        <strong>{recording.classification}</strong>
+                        <span>{ecgRecordedAt(recording.recordedAt)}</span>
+                        <small>{ecgDuration(recording.durationSeconds)}{recording.source ? ` · ${recording.source}` : ''}</small>
+                      </div>
+                      <div class="ecg-rate">
+                        <strong>{recording.averageBPM === undefined ? '—' : Math.round(recording.averageBPM)}</strong>
+                        <span>{recording.averageBPM === undefined ? 'No average' : 'avg bpm'}</span>
+                      </div>
+                    </div>
+                    {#if recording.waveform?.length}
+                      <div class="ecg-waveform">
+                        <svg viewBox="0 0 320 88" preserveAspectRatio="none" role="img" aria-label={`Lead I ECG waveform for ${ecgRecordedAt(recording.recordedAt)}`}>
+                          <path class="ecg-grid-line" d="M0 22H320M0 44H320M0 66H320M80 0V88M160 0V88M240 0V88"/>
+                          <polyline points={ecgWaveformPoints(recording)}/>
+                        </svg>
+                        <span>Lead I · millivolts</span>
+                      </div>
+                    {:else}
+                      <p class="ecg-waveform-missing">Waveform data is not available for this recording.</p>
+                    {/if}
+                  </article>
+                {/each}
+              </div>
+              {#if healthTrends.ecg.count > healthTrends.ecg.recordings.length}
+                <p class="ecg-limit-note">Showing the latest {healthTrends.ecg.recordings.length} of {healthTrends.ecg.count} recordings.</p>
+              {/if}
+            {:else if healthState === 'connected' || healthState === 'empty'}
+              <div class="ecg-inline-empty"><strong>No readable ECG recordings yet</strong><p>Take an ECG with Apple Watch, then refresh Apple Health data.</p></div>
+            {:else if healthState === 'unavailable'}
+              <div class="ecg-inline-empty"><strong>View ECG waveforms in the iPhone app</strong><p>The web version cannot read Apple Health records.</p></div>
+            {:else if healthState === 'ready' || healthState === 'error'}
+              <div class="ecg-inline-empty"><strong>Connect Apple Health to view ECG recordings</strong><p>Access is optional and stays under your control.</p></div>
+            {/if}
+            <p class="ecg-disclaimer">Shown for reference only. Grounding does not interpret ECGs or use them to estimate how you feel.</p>
+          </section>
           <div class="health-actions">
             {#if healthState === 'ready' || healthState === 'error'}
               <button class="secondary" onclick={openHealthSetup}>Review and connect</button>
@@ -1009,6 +1088,17 @@
               <button class="watch-connection-close" aria-label="Close Watch settings" onclick={closeWatchConnection}>×</button>
             </div>
             <p class:success={watchConnectionState === 'success'} class:error={watchConnectionState === 'error'} role="status" aria-live="polite">{watchConnectionMessage || watchStatusDescription()}</p>
+            {#if watchSnapshot.isRunning}
+              <div class="watch-monitoring-banner" role="status" aria-label="Apple Watch monitoring is active">
+                <span class="watch-monitoring-pulse" aria-hidden="true"></span>
+                <div>
+                  <strong>Monitoring in background</strong>
+                  <small>{watchHasReading() ? `${Math.round(watchSnapshot.bpm!)} bpm · ${Math.floor((watchSnapshot.elapsedTime ?? 0) / 60)}:${String(Math.floor((watchSnapshot.elapsedTime ?? 0) % 60)).padStart(2, '0')} elapsed` : 'Session active · waiting for heart rate'}</small>
+                </div>
+              </div>
+              <p class="watch-background-note">You can use other parts of Grounding while the Watch continues collecting. The session stays active until you stop it.</p>
+              <button class="watch-stop-button" onclick={stopActiveWatchMeasurement}>Stop Watch monitoring</button>
+            {/if}
             <button class="watch-test-button" disabled={watchConnectionState === 'testing'} onclick={testWatchConnection}>{watchConnectionState === 'testing' ? 'Testing…' : 'Test connection'}</button>
 
             <div class="calibration-card">
@@ -1167,14 +1257,15 @@
   .health-detail-layer{position:fixed;z-index:90;inset:0;display:flex;align-items:flex-end;justify-content:center}.health-detail-scrim{position:absolute;inset:0;width:100%;height:100%;padding:0;border:0;background:rgba(42,38,34,.46);cursor:pointer}.health-detail-sheet{position:relative;width:min(100%,620px);max-height:min(88dvh,760px);padding:10px 22px calc(26px + env(safe-area-inset-bottom));border-radius:28px 28px 0 0;background:var(--surface);overflow-y:auto;box-shadow:0 -12px 40px rgba(45,40,35,.16)}.health-detail-handle{width:38px;height:4px;margin:0 auto 13px;border-radius:999px;background:#c9c1b6}.health-detail-sheet header{display:flex;align-items:flex-start;justify-content:space-between;gap:18px}.health-detail-sheet header h2{font-size:23px;line-height:1.2}.health-detail-close{width:44px;height:44px;flex:none;padding:0;border:1px solid var(--border);border-radius:50%;background:var(--surface);font-size:26px;line-height:1;cursor:pointer}.health-detail-summary{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:18px}.health-detail-summary>div{padding:14px;border-radius:17px;background:var(--cream)}.health-detail-summary span{display:block;font-size:10px;color:var(--muted)}.health-detail-summary strong{display:inline-block;margin-top:8px;font-size:25px;font-variant-numeric:tabular-nums}.health-detail-summary small{margin-left:5px;font-size:9px;color:var(--muted)}.health-line-chart{position:relative;margin-top:18px;padding:9px 8px 0 30px;border:1px solid var(--border);border-radius:18px;background:#faf7f1}.health-line-chart svg{display:block;width:100%;height:150px;overflow:visible;cursor:ew-resize;touch-action:none}.health-line-chart polyline{fill:none;stroke:#4f827b;stroke-width:3;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}.health-line-chart circle{fill:var(--sun);stroke:#fffdf9;stroke-width:3;pointer-events:none}.health-line-chart .chart-grid{fill:none;stroke:#ded6c9;stroke-width:1;pointer-events:none}.health-line-chart .chart-baseline{fill:none;stroke:#b26e54;stroke-width:1.5;stroke-dasharray:5 5;pointer-events:none}.health-line-chart .chart-selection-line{fill:none;stroke:#6b6259;stroke-width:1.25;stroke-dasharray:4 4;pointer-events:none}.health-line-chart .chart-anchor{opacity:.72}.chart-scale{position:absolute;left:7px;top:19px;bottom:30px;display:flex;flex-direction:column;justify-content:space-between;font-size:8px;color:var(--muted)}.chart-dates{display:flex;justify-content:space-between;padding:0 4px 10px;font-size:9px;color:var(--muted)}.health-chart-summary{margin:9px 2px 0;font-size:11px;line-height:1.5;color:var(--muted)}.health-source-note{margin-top:17px;padding:14px;border-radius:17px;background:var(--teal)}.health-source-note strong,.health-reading-list>strong{font-size:12px}.health-source-note p{margin:5px 0 0;font-size:11px;line-height:1.5;color:#52645f}.health-reading-list{margin-top:17px}.health-reading-list>button{width:100%;min-height:44px;padding:0;border:0;border-bottom:1px solid var(--border);background:transparent;display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:11px;cursor:pointer}.health-reading-list>button.selected{padding-inline:9px;border-radius:10px;background:var(--sun-soft)}.health-reading-list>button span:last-child{font-weight:700;font-variant-numeric:tabular-nums}
   .feeling-detail-sheet{max-height:min(90dvh,820px)}.feeling-conclusion{margin-top:18px;padding:17px;border-left:4px solid #7aa59d;border-radius:17px;background:var(--teal)}.feeling-conclusion.mild{border-left-color:var(--sun);background:var(--sun-soft)}.feeling-conclusion.elevated{border-left-color:#c46f57;background:#f7e2dc}.feeling-conclusion>span{font-size:9px;font-weight:750;text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}.feeling-conclusion p{margin:7px 0 8px;font-size:13px;line-height:1.55}.feeling-conclusion small{font-size:10px;color:var(--muted)}.feeling-method,.feeling-evidence{margin-top:22px}.feeling-method h3,.feeling-section-heading h3{margin:0;font-size:14px}.feeling-method ol{margin:12px 0 0;padding:0;list-style:none;display:grid;gap:12px}.feeling-method li{display:grid;grid-template-columns:30px 1fr;gap:11px;align-items:start}.feeling-method li>span{width:30px;height:30px;border-radius:11px;display:grid;place-items:center;background:var(--cream);font-size:11px;font-weight:750}.feeling-method strong{font-size:12px}.feeling-method p{margin:4px 0 0;font-size:11px;line-height:1.5;color:var(--muted)}.feeling-section-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}.feeling-section-heading>span{padding:6px 9px;border-radius:999px;background:var(--cream);font-size:9px;font-weight:700;color:var(--muted)}.feeling-evidence article{padding:13px 0;border-bottom:1px solid var(--border)}.feeling-evidence article.primary-evidence{margin-bottom:3px;padding:14px;border:1px solid #c8ddd5;border-radius:16px;background:var(--teal)}.feeling-evidence article>div{display:flex;align-items:center;justify-content:space-between;gap:12px}.feeling-evidence article strong{font-size:12px}.feeling-evidence article>div span{flex:none;font-size:9px;font-weight:700;color:#52645f}.feeling-evidence article>p{margin:7px 0 3px;font-size:13px;font-weight:700;font-variant-numeric:tabular-nums}.feeling-evidence article>small{display:block;font-size:10px;line-height:1.45;color:var(--muted)}.feeling-not-used{margin-top:20px;padding:15px;border-radius:16px;background:var(--cream)}.feeling-not-used strong{font-size:12px}.feeling-not-used p{margin:6px 0 0;font-size:10px;line-height:1.5;color:var(--muted)}.feeling-updated{margin:13px 2px 0;font-size:9px;color:var(--muted);text-align:center}
   .bottom-nav{position:fixed;z-index:20;left:max(24px,env(safe-area-inset-left));right:max(24px,env(safe-area-inset-right));bottom:max(16px,env(safe-area-inset-bottom));max-width:640px;margin:auto;height:72px;padding:10px 12px;display:flex;align-items:center;justify-content:space-between;border-radius:24px;background:rgba(241,231,214,.96);box-shadow:0 8px 24px rgba(45,40,35,.1);backdrop-filter:blur(16px)}.bottom-nav button{width:58px;height:52px;border:0;border-radius:18px;background:none;color:#72766f;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;cursor:pointer}.bottom-nav button.active{background:var(--sun-soft);color:#2f302d}.bottom-nav span{font-size:9px}.desktop-rail{display:none}
-  .watch-settings-panel{margin:12px 0 20px}.calibration-card{margin-top:16px;padding-top:16px;border-top:1px solid var(--border)}.calibration-card h3{margin:0;font-size:16px}.calibration-card>p:not(.eyebrow){margin:7px 0 13px;font-size:11px;line-height:1.5;color:var(--muted)}.calibration-card>small{display:block;margin:7px 0 12px;font-size:9px;color:var(--muted)}.calibration-reading{display:flex;align-items:baseline;gap:6px;margin:4px 0 10px}.calibration-reading strong{font:30px/1 Georgia,serif}.calibration-reading span{font-size:9px;color:var(--muted)}.calibration-progress{height:6px;margin-top:13px;border-radius:999px;background:var(--cream);overflow:hidden}.calibration-progress i{display:block;height:100%;border-radius:inherit;background:#4f827b;transition:width .25s ease}.calibration-message{margin:8px 0 12px!important;min-height:0!important}.calibration-message.success{color:#356c61!important}.calibration-message.error{color:#a34b3b!important}.calibration-action{min-height:44px}
+  .watch-settings-panel{margin:12px 0 20px}.watch-monitoring-banner{display:flex;align-items:center;gap:12px;margin:14px 0 0;padding:14px;border:1px solid #a9ccc3;border-radius:16px;background:#e3efea}.watch-monitoring-banner>div{min-width:0;display:flex;flex-direction:column;gap:3px}.watch-monitoring-banner strong{font-size:13px;color:#244f48}.watch-monitoring-banner small{font-size:10px;color:#52645f;font-variant-numeric:tabular-nums}.watch-monitoring-pulse{width:12px;height:12px;flex:none;border:3px solid #cbe2dc;border-radius:50%;background:#3f887d;box-shadow:0 0 0 4px #d5e9e4}.watch-background-note{margin:9px 2px 12px!important;font-size:10px!important;line-height:1.5!important;color:var(--muted)!important}.watch-stop-button{width:100%;min-height:44px;margin-bottom:9px;border:1px solid #d3a398;border-radius:14px;background:#fff7f4;color:#8c3e34;font:inherit;font-size:11px;font-weight:750;cursor:pointer}.watch-stop-button:active{opacity:.68}.calibration-card{margin-top:16px;padding-top:16px;border-top:1px solid var(--border)}.calibration-card h3{margin:0;font-size:16px}.calibration-card>p:not(.eyebrow){margin:7px 0 13px;font-size:11px;line-height:1.5;color:var(--muted)}.calibration-card>small{display:block;margin:7px 0 12px;font-size:9px;color:var(--muted)}.calibration-reading{display:flex;align-items:baseline;gap:6px;margin:4px 0 10px}.calibration-reading strong{font:30px/1 Georgia,serif}.calibration-reading span{font-size:9px;color:var(--muted)}.calibration-progress{height:6px;margin-top:13px;border-radius:999px;background:var(--cream);overflow:hidden}.calibration-progress i{display:block;height:100%;border-radius:inherit;background:#4f827b;transition:width .25s ease}.calibration-message{margin:8px 0 12px!important;min-height:0!important}.calibration-message.success{color:#356c61!important}.calibration-message.error{color:#a34b3b!important}.calibration-action{min-height:44px}
   @media(max-width:374px){.page{padding-inline:18px}.page-header h1{font-size:25px}.watch-connection-tab{padding-right:8px}.watch-connection-tab small{display:none}.focus-card{grid-template-columns:1fr 80px}.state-card{gap:10px}.method-grid{gap:12px}.method-grid button{min-height:145px}.summary-card span{font-size:9px}.bottom-nav{left:12px;right:12px}.bottom-nav button{width:52px}.artifact-grid,.journal-grid,.health-grid{grid-template-columns:1fr}.health-card-header{align-items:flex-start}.health-status{max-width:92px;text-align:center}.health-permission-card ul{grid-template-columns:1fr}.health-detail-sheet{padding-inline:18px}.health-detail-summary{grid-template-columns:1fr}}
+  @media(max-width:520px){.ecg-record-header{grid-template-columns:40px minmax(0,1fr) auto}.ecg-record-icon{width:40px;height:40px}.ecg-waveform{margin-inline:-4px}.ecg-recording-copy small{max-width:180px}}
   @media(min-width:900px){.app-shell{display:grid;grid-template-columns:230px 1fr}.desktop-rail{display:flex;height:100dvh;padding:calc(32px + env(safe-area-inset-top)) 20px calc(24px + env(safe-area-inset-bottom));flex-direction:column;gap:8px;border-right:1px solid var(--border);background:#f3ebde}.desktop-rail strong{font-size:18px;letter-spacing:.12em;margin:0 10px 30px}.desktop-rail strong span{color:#b9785f}.desktop-rail button{height:48px;border:0;border-radius:15px;background:none;display:flex;align-items:center;gap:12px;padding:0 15px;color:var(--muted)}.desktop-rail button.active{background:var(--sun-soft);color:#2f302d}.app-scroll{padding-bottom:24px}.page{width:min(100%,820px);padding:48px}.bottom-nav{display:none}.method-grid{grid-template-columns:repeat(4,1fr)}.health-grid{grid-template-columns:repeat(4,1fr)}.focus-card{grid-template-columns:1fr 220px}}
   @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;animation-duration:.01ms!important;transition-duration:.01ms!important}}
   .health-detail-empty{margin-top:18px;padding:20px;border-radius:18px;background:var(--cream)}
   .health-detail-empty strong{font-size:14px}
   .health-detail-empty p{margin:7px 0 0;font-size:11px;line-height:1.5;color:var(--muted)}
   .practice-trend{margin-top:14px}.bars i{flex:1;max-width:38px;min-height:8px}.bars i b{position:absolute;top:-17px;width:100%;text-align:center;font:9px/1 Manrope}.method-dot{flex:none}.method-dot.mindfulness{background:#ddd6ee}.method-dot.grounding{background:#cfdfc0}
-  .ecg-summary{margin-top:12px;padding:13px;border-radius:15px;background:var(--cream);display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.ecg-summary.unavailable{background:#f5f2ec}.ecg-summary>div{display:flex;flex-direction:column;gap:3px}.ecg-summary strong{font-size:12px}.ecg-summary span,.ecg-summary small{font-size:9px;line-height:1.45;color:var(--muted)}.ecg-summary small{max-width:180px;text-align:right}.ecg-access{min-height:44px;flex:none;padding:0 11px;border:1px solid var(--border);border-radius:13px;background:var(--surface);font-size:9px;font-weight:700;cursor:pointer}
+  .ecg-section{margin-top:22px;padding-top:20px;border-top:1px solid var(--border)}.ecg-section-heading{display:grid;grid-template-columns:44px minmax(0,1fr) auto;gap:11px;align-items:center;margin-bottom:13px}.ecg-heading-icon,.ecg-record-icon{display:grid;place-items:center;border-radius:14px;background:#f7e8e3;color:#984c43}.ecg-heading-icon{width:44px;height:44px}.ecg-heading-icon svg,.ecg-record-icon svg{width:24px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}.ecg-section-heading h3{font-size:16px}.ecg-count{min-width:29px;height:29px;padding:0 8px;border-radius:999px;background:var(--teal);display:grid;place-items:center;color:#355f59;font-size:10px;font-weight:750}.ecg-list{display:grid;gap:10px}.ecg-list article{padding:14px;border:1px solid var(--border);border-radius:18px;background:#fffdf9}.ecg-record-header{display:grid;grid-template-columns:44px minmax(0,1fr) auto;gap:11px;align-items:center}.ecg-record-icon{width:44px;height:44px}.ecg-recording-copy{min-width:0;display:flex;flex-direction:column;gap:3px}.ecg-recording-copy strong{font-size:12px}.ecg-recording-copy span{font-size:10px;color:var(--muted)}.ecg-recording-copy small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:9px;color:var(--muted)}.ecg-rate{text-align:right}.ecg-rate strong{display:block;font-size:19px;font-variant-numeric:tabular-nums}.ecg-rate span{display:block;margin-top:2px;color:var(--muted);font-size:8px}.ecg-waveform{position:relative;margin-top:13px;padding:8px 8px 19px;border-radius:14px;background-color:#fff9f7;background-image:linear-gradient(rgba(180,92,80,.09) 1px,transparent 1px),linear-gradient(90deg,rgba(180,92,80,.09) 1px,transparent 1px);background-size:12px 12px;overflow:hidden}.ecg-waveform svg{display:block;width:100%;height:92px}.ecg-waveform polyline{fill:none;stroke:#a14f47;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;vector-effect:non-scaling-stroke}.ecg-waveform .ecg-grid-line{fill:none;stroke:rgba(161,79,71,.12);stroke-width:1;vector-effect:non-scaling-stroke}.ecg-waveform>span{position:absolute;left:10px;bottom:5px;color:#8a6b65;font-size:8px}.ecg-waveform-missing{margin:12px 0 0;padding:13px;border-radius:12px;background:var(--cream);color:var(--muted);font-size:10px}.ecg-inline-empty{padding:15px;border-radius:15px;background:var(--cream)}.ecg-inline-empty strong{font-size:12px}.ecg-inline-empty p{margin:5px 0 0;color:var(--muted);font-size:10px;line-height:1.5}.ecg-disclaimer{margin:12px 2px 0;color:var(--muted);font-size:9px;line-height:1.5}.ecg-limit-note{margin:10px 2px 0;color:var(--muted);font-size:9px;text-align:right}
   .health-intro{margin:15px 0 0;font-size:12px;line-height:1.5;color:var(--muted)}.health-range{display:flex;gap:7px;margin-top:14px}.health-range button{min-height:44px;flex:1;border:1px solid var(--border);border-radius:14px;background:var(--surface);font-size:11px;font-weight:700;cursor:pointer}.health-range button.active{background:var(--teal);border-color:#7aa59d}.health-point-value{margin:10px 0 0;padding:10px 12px;border-radius:13px;background:var(--sun-soft);display:flex;justify-content:space-between;font-size:11px}.health-line-chart circle.selected{fill:#b26e54;stroke-width:4}.feeling-method>p{margin:9px 0 0;font-size:11px;line-height:1.55;color:var(--muted)}
 </style>
